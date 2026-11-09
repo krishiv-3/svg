@@ -2,7 +2,15 @@
   "$schema": "https://turborepo.com/schema.json",
   "ui": "stream",
   "globalDependencies": [".env", "tsconfig.json"],
-  "globalEnv": ["NODE_ENV", "APP_ENV"],
+  "globalEnv": [
+    "NODE_ENV",
+    "APP_ENV",
+    "DATABASE_URL",
+    "MIGRATE_DATABASE_URL",
+    "TEST_DATABASE_URL",
+    "TEST_MIGRATE_DATABASE_URL",
+    "ADMIN_DATABASE_URL"
+  ],
   "tasks": {
     "generate": {
       "cache": true,
