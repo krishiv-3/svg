@@ -4,6 +4,23 @@ import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
 import { Button, Input, Select, Textarea } from '@/components/ui';
+import { mapCampaignFieldErrors, validateManualEvidence } from '@/lib/campaign-errors';
+
+/** Human labels for the validation summary. */
+const FIELD_LABELS: Record<string, string> = {
+  name: 'Campaign name',
+  slug: 'Slug',
+  purposeSummary: 'Short purpose',
+  story: 'Story',
+  targetRupees: 'Target',
+  manualRaisedRupees: 'Raised so far',
+  manualRaisedNote: 'Source note',
+  progressSource: 'Progress source',
+  startDate: 'Start date',
+  endDate: 'End date',
+  seoTitle: 'SEO title',
+  seoDescription: 'SEO description',
+};
 
 /**
  * Campaign editor.
@@ -73,6 +90,7 @@ export function CampaignForm({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [scheduledFor, setScheduledFor] = useState('');
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
   const update = <K extends keyof CampaignFormValues>(
     key: K,
@@ -107,7 +125,19 @@ export function CampaignForm({
     });
 
     if (!response.ok) {
-      const problem = (await response.json().catch(() => ({}))) as { title?: string };
+      const problem = (await response.json().catch(() => ({}))) as {
+        title?: string;
+        errors?: { path: string; message: string }[];
+      };
+
+      if (response.status === 422 && Array.isArray(problem.errors)) {
+        const { fieldErrors: mapped } = mapCampaignFieldErrors(problem.errors);
+        setFieldErrors(mapped);
+        setError('Some fields need attention — see the messages below.');
+        return false;
+      }
+
+      setFieldErrors({});
       setError(
         response.status === 409
           ? 'This item changed since you opened it. Reload before saving.'
@@ -123,6 +153,22 @@ export function CampaignForm({
     setBusy(true);
     setError(null);
     setMessage(null);
+    setFieldErrors({});
+
+    // Same rule the server enforces; catching it here keeps the message next to
+    // the field without a round trip. The server stays authoritative.
+    const local = validateManualEvidence(
+      values.progressSource,
+      values.manualRaisedRupees,
+      values.manualRaisedNote,
+    );
+
+    if (Object.keys(local).length > 0) {
+      setFieldErrors(local);
+      setError('Some fields need attention — see the messages below.');
+      setBusy(false);
+      return;
+    }
 
     try {
       const ok =
@@ -258,6 +304,9 @@ export function CampaignForm({
             name="manualRaisedRupees"
             label="Raised so far (₹)"
             inputMode="numeric"
+            {...(fieldErrors['manualRaisedRupees'] === undefined
+              ? {}
+              : { error: fieldErrors['manualRaisedRupees'] })}
             value={values.manualRaisedRupees}
             onChange={(event) => {
               update('manualRaisedRupees', event.target.value);
@@ -267,6 +316,9 @@ export function CampaignForm({
             name="manualRaisedNote"
             label="Source note"
             hint="Required with a manual total: where the figure comes from."
+            {...(fieldErrors['manualRaisedNote'] === undefined
+              ? {}
+              : { error: fieldErrors['manualRaisedNote'] })}
             value={values.manualRaisedNote}
             onChange={(event) => {
               update('manualRaisedNote', event.target.value);
@@ -342,9 +394,18 @@ export function CampaignForm({
       </div>
 
       {error === null ? null : (
-        <p role="alert" className="text-[length:var(--text-body-sm)] text-danger">
-          {error}
-        </p>
+        <div role="alert" className="flex flex-col gap-1">
+          <p className="text-[length:var(--text-body-sm)] text-danger">{error}</p>
+          {Object.entries(fieldErrors).length === 0 ? null : (
+            <ul className="list-disc pl-5 text-[length:var(--text-caption)] text-danger">
+              {Object.entries(fieldErrors).map(([key, message]) => (
+                <li key={key}>
+                  <span className="font-semibold">{FIELD_LABELS[key] ?? key}:</span> {message}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       )}
       {message === null ? null : (
         <p role="status" className="text-[length:var(--text-body-sm)] text-success">

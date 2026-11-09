@@ -41,6 +41,32 @@ export function ContentForm({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+
+  /** Optional URL fields must be empty or a real http(s) URL. */
+  const urlErrors = (): Record<string, string> => {
+    const found: Record<string, string> = {};
+
+    for (const field of descriptor.fields) {
+      if (field.key !== 'registrationUrl') continue;
+
+      const raw = values[field.key];
+      const text = typeof raw === 'string' ? raw.trim() : '';
+
+      if (text === '') continue;
+
+      try {
+        const parsed = new URL(text);
+        if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+          found[field.key] = 'Use an http:// or https:// address.';
+        }
+      } catch {
+        found[field.key] = 'Enter a complete URL, for example https://example.org/register.';
+      }
+    }
+
+    return found;
+  };
 
   const set = (key: string, value: string | boolean): void => {
     setValues((current) => ({ ...current, [key]: value }));
@@ -77,7 +103,21 @@ export function ContentForm({
     });
 
     if (!response.ok) {
-      const problem = (await response.json().catch(() => ({}))) as { title?: string };
+      const problem = (await response.json().catch(() => ({}))) as {
+        title?: string;
+        errors?: { path: string; message: string }[];
+      };
+
+      if (response.status === 422 && Array.isArray(problem.errors)) {
+        const mapped: Record<string, string> = {};
+        for (const issue of problem.errors) {
+          mapped[issue.path] ??= issue.message;
+        }
+        setFieldErrors(mapped);
+        setError('Some fields need attention.');
+        return false;
+      }
+
       setError(
         response.status === 409
           ? 'This item changed since you opened it. Reload before saving.'
@@ -93,6 +133,16 @@ export function ContentForm({
     setBusy(true);
     setError(null);
     setMessage(null);
+    setFieldErrors({});
+
+    const local = urlErrors();
+
+    if (Object.keys(local).length > 0) {
+      setFieldErrors(local);
+      setError('Some fields need attention.');
+      setBusy(false);
+      return;
+    }
 
     try {
       const ok =
@@ -207,6 +257,7 @@ export function ContentForm({
             label={field.label}
             {...(field.hint === undefined ? {} : { hint: field.hint })}
             required={field.required === true}
+            {...(fieldErrors[field.key] === undefined ? {} : { error: fieldErrors[field.key] })}
             value={typeof raw === 'string' ? raw : ''}
             onChange={(event) => {
               set(field.key, event.target.value);

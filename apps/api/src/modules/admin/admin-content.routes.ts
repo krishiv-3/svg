@@ -7,6 +7,7 @@ import type { PrismaClient } from '../../generated/prisma/client.js';
 
 import { AppError, NotFoundError } from '../../core/http/errors.js';
 import { requireCsrf, requirePermission } from '../../core/auth/middleware.js';
+import { publishEntity } from './publishing.js';
 
 /**
  * Admin management for Activities, Events and News.
@@ -301,6 +302,27 @@ export function createContentAdminRouter({ prisma, audit }: ContentAdminDependen
 
       if (current === null) throw new NotFoundError('Activity not found');
 
+      if (action === 'publish') {
+        await publishEntity(prisma, 'ACTIVITY', current.id, { actorId: actor(request) });
+        const published = await prisma.activity.findUniqueOrThrow({
+          where: { id: current.id },
+          select: { id: true, slug: true, status: true, version: true },
+        });
+
+        await audit({
+          actorId: actor(request),
+          action: 'activity.publish',
+          entityType: 'ACTIVITY',
+          entityId: published.id,
+          before: { status: current.status },
+          after: { status: published.status },
+          requestId: requestId(request),
+        });
+
+        response.status(200).json({ data: published });
+        return;
+      }
+
       const data = transitionData(action, current.status, scheduledFor, actor(request), new Date());
       const updated = await prisma.activity.update({
         where: { id: current.id },
@@ -482,6 +504,27 @@ export function createContentAdminRouter({ prisma, audit }: ContentAdminDependen
       });
 
       if (current === null) throw new NotFoundError('Event not found');
+
+      if (action === 'publish') {
+        await publishEntity(prisma, 'EVENT', current.id, { actorId: actor(request) });
+        const published = await prisma.event.findUniqueOrThrow({
+          where: { id: current.id },
+          select: { id: true, slug: true, status: true, version: true },
+        });
+
+        await audit({
+          actorId: actor(request),
+          action: 'event.publish',
+          entityType: 'EVENT',
+          entityId: published.id,
+          before: { status: current.status },
+          after: { status: published.status },
+          requestId: requestId(request),
+        });
+
+        response.status(200).json({ data: published });
+        return;
+      }
 
       const data = transitionData(action, current.status, scheduledFor, actor(request), new Date());
       const updated = await prisma.event.update({
@@ -689,6 +732,27 @@ export function createContentAdminRouter({ prisma, audit }: ContentAdminDependen
 
       if (current === null) throw new NotFoundError('Article not found');
 
+      if (action === 'publish') {
+        await publishEntity(prisma, 'NEWS', current.id, { actorId: actor(request) });
+        const published = await prisma.newsPost.findUniqueOrThrow({
+          where: { id: current.id },
+          select: { id: true, slug: true, status: true, version: true },
+        });
+
+        await audit({
+          actorId: actor(request),
+          action: 'news.publish',
+          entityType: 'NEWS',
+          entityId: published.id,
+          before: { status: current.status },
+          after: { status: published.status },
+          requestId: requestId(request),
+        });
+
+        response.status(200).json({ data: published });
+        return;
+      }
+
       const data = transitionData(action, current.status, scheduledFor, actor(request), new Date());
       const updated = await prisma.newsPost.update({
         where: { id: current.id },
@@ -709,6 +773,100 @@ export function createContentAdminRouter({ prisma, audit }: ContentAdminDependen
       response.status(200).json({ data: updated });
     },
   );
+
+  /* --------------------------------------------------------------- previews */
+
+  router.get(
+    '/activities/:id/preview',
+    requirePermission('activity.read'),
+    async (request, response) => {
+      const row = await prisma.activity.findFirst({
+        where: { id: String(request.params.id), deletedAt: null },
+        select: {
+          id: true,
+          title: true,
+          slug: true,
+          shortDescription: true,
+          body: true,
+          status: true,
+          version: true,
+        },
+      });
+
+      if (row === null) throw new NotFoundError('Activity not found');
+
+      response
+        .setHeader('Cache-Control', 'no-store, private')
+        .status(200)
+        .json({
+          data: {
+            ...row,
+            body: (row.body as { paragraphs?: string[] } | null)?.paragraphs ?? [],
+            preview: true,
+          },
+        });
+    },
+  );
+
+  router.get('/events/:id/preview', requirePermission('event.read'), async (request, response) => {
+    const row = await prisma.event.findFirst({
+      where: { id: String(request.params.id), deletedAt: null },
+      select: {
+        id: true,
+        title: true,
+        slug: true,
+        description: true,
+        startAt: true,
+        endAt: true,
+        venueName: true,
+        status: true,
+        version: true,
+      },
+    });
+
+    if (row === null) throw new NotFoundError('Event not found');
+
+    response
+      .setHeader('Cache-Control', 'no-store, private')
+      .status(200)
+      .json({
+        data: {
+          ...row,
+          description: (row.description as { paragraphs?: string[] }).paragraphs ?? [],
+          startAt: row.startAt.toISOString(),
+          endAt: row.endAt?.toISOString() ?? null,
+          preview: true,
+        },
+      });
+  });
+
+  router.get('/news/:id/preview', requirePermission('news.read'), async (request, response) => {
+    const row = await prisma.newsPost.findFirst({
+      where: { id: String(request.params.id), deletedAt: null },
+      select: {
+        id: true,
+        title: true,
+        slug: true,
+        excerpt: true,
+        body: true,
+        status: true,
+        version: true,
+      },
+    });
+
+    if (row === null) throw new NotFoundError('Article not found');
+
+    response
+      .setHeader('Cache-Control', 'no-store, private')
+      .status(200)
+      .json({
+        data: {
+          ...row,
+          body: (row.body as { paragraphs?: string[] }).paragraphs ?? [],
+          preview: true,
+        },
+      });
+  });
 
   return router;
 }

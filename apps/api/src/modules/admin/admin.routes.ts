@@ -26,7 +26,7 @@ import {
   withAdmin,
 } from '../../core/auth/middleware.js';
 import { AppError, NotFoundError, UnauthorizedError } from '../../core/http/errors.js';
-import { publishCampaign } from './publishing.js';
+import { publishEntity } from './publishing.js';
 import { createContentAdminRouter } from './admin-content.routes.js';
 
 /**
@@ -42,27 +42,50 @@ const loginSchema = z.object({
   password: z.string().min(8).max(200),
 });
 
-const campaignInputSchema = z.object({
-  name: z.string().min(3).max(200),
-  slug: z
-    .string()
-    .min(3)
-    .max(160)
-    .regex(/^[a-z0-9]+(-[a-z0-9]+)*$/),
-  purposeSummary: z.string().min(10).max(400),
-  story: z.string().min(10).max(20_000),
-  targetAmountMinor: z.number().int().positive().nullable(),
-  manualRaisedMinor: z.number().int().min(0).nullable(),
-  manualRaisedNote: z.string().max(2000).nullable(),
-  progressSource: z.enum(['VERIFIED_DONATIONS', 'MANUAL']),
-  startDate: z.iso.date(),
-  endDate: z.iso.date().nullable(),
-  isFeatured: z.boolean(),
-  acceptsDonations: z.boolean(),
-  seoTitle: z.string().max(70).nullable(),
-  seoDescription: z.string().max(180).nullable(),
-  version: z.number().int().min(1),
-});
+const campaignInputSchema = z
+  .object({
+    name: z.string().min(3).max(200),
+    slug: z
+      .string()
+      .min(3)
+      .max(160)
+      .regex(/^[a-z0-9]+(-[a-z0-9]+)*$/),
+    purposeSummary: z.string().min(10).max(400),
+    story: z.string().min(10).max(20_000),
+    targetAmountMinor: z.number().int().positive().nullable(),
+    manualRaisedMinor: z.number().int().min(0).nullable(),
+    manualRaisedNote: z.string().max(2000).nullable(),
+    progressSource: z.enum(['VERIFIED_DONATIONS', 'MANUAL']),
+    startDate: z.iso.date(),
+    endDate: z.iso.date().nullable(),
+    isFeatured: z.boolean(),
+    acceptsDonations: z.boolean(),
+    seoTitle: z.string().max(70).nullable(),
+    seoDescription: z.string().max(180).nullable(),
+    version: z.number().int().min(1),
+  })
+  .superRefine((value, ctx) => {
+    if (value.progressSource !== 'MANUAL') return;
+
+    // Mirrors the `campaigns_manual_requires_evidence` CHECK constraint. Without
+    // this, the database rejected the row and the API surfaced a 500 instead of
+    // a field-level 422.
+    if (value.manualRaisedMinor === null) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['manualRaisedMinor'],
+        message: 'A manual progress source needs the amount raised so far.',
+      });
+    }
+
+    if (value.manualRaisedNote === null || value.manualRaisedNote.trim() === '') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['manualRaisedNote'],
+        message: 'Describe where the manual total comes from.',
+      });
+    }
+  });
 
 const publishSchema = z.object({
   action: z.enum(['publish', 'unpublish', 'archive', 'restore', 'schedule']),
@@ -481,7 +504,7 @@ export function createAdminRouter({ prisma, config, logger }: AdminRouterDepende
       }
 
       if (action === 'publish') {
-        await publishCampaign(prisma, current.id, { actorId });
+        await publishEntity(prisma, 'CAMPAIGN', current.id, { actorId });
 
         const published = await prisma.campaign.findUniqueOrThrow({
           where: { id: current.id },

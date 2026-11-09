@@ -1,4 +1,4 @@
-﻿import request from 'supertest';
+import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { uuidv7 } from '@gaushala/shared';
@@ -6,7 +6,7 @@ import { uuidv7 } from '@gaushala/shared';
 import { createApp } from '../../src/app.js';
 import { hashPassword } from '../../src/core/auth/index.js';
 import { createLogger } from '../../src/core/logging/logger.js';
-import { publishDueCampaigns } from '../../src/modules/admin/publishing.js';
+import { publishDueCampaigns, publishDueContent } from '../../src/modules/admin/publishing.js';
 import { appClient, ownerClient, testEnv } from './helpers.js';
 
 /**
@@ -648,5 +648,275 @@ describe('content modules (activities, events, news)', () => {
     expect((await authed('norole', 'get', '/activities')).status).toBe(403);
     expect((await authed('norole', 'get', '/events')).status).toBe(403);
     expect((await authed('norole', 'get', '/news')).status).toBe(403);
+  });
+});
+
+describe('campaign manual evidence validation', () => {
+  // Slugs must be unique per run: a leftover row would trip the live-slug index.
+  const run = String(Date.now());
+  const slugFor = (suffix: string) => `adm-manual-${run}-${suffix}`;
+  let id = '';
+
+  const payload = (over: Record<string, unknown>) => ({
+    ...campaignPayload(slugFor('base')),
+    ...over,
+  });
+
+  beforeAll(async () => {
+    await login('super');
+    const saved = await authed('super', 'post', '/campaigns', payload({ slug: slugFor('base') }));
+    id = saved.body.data.id;
+    created.campaigns.push(id);
+  });
+
+  it('rejects a manual total with no source note, naming the field', async () => {
+    const response = await authed('super', 'put', `/campaigns/${id}`, {
+      ...payload({}),
+      manualRaisedNote: null,
+      version: 1,
+    });
+
+    expect(response.status).toBe(422);
+    expect(response.body.code).toBe('VALIDATION_FAILED');
+    expect(response.body.errors.map((e: { path: string }) => e.path)).toContain('manualRaisedNote');
+  });
+
+  it('rejects a whitespace-only source note', async () => {
+    const response = await authed('super', 'put', `/campaigns/${id}`, {
+      ...payload({}),
+      manualRaisedNote: '   ',
+      version: 1,
+    });
+
+    expect(response.status).toBe(422);
+    expect(response.body.errors.map((e: { path: string }) => e.path)).toContain('manualRaisedNote');
+  });
+
+  it('accepts a manual total with a real source note', async () => {
+    const response = await authed('super', 'put', `/campaigns/${id}`, {
+      ...payload({}),
+      manualRaisedNote: 'Recorded in the donation ledger',
+      version: 1,
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body.data.status).toBe('DRAFT');
+  });
+
+  it('does not require a note for verified donations', async () => {
+    const saved = await authed('super', 'post', '/campaigns', {
+      ...payload({ slug: slugFor('verified') }),
+      progressSource: 'VERIFIED_DONATIONS',
+      manualRaisedMinor: null,
+      manualRaisedNote: null,
+    });
+
+    expect(saved.status).toBe(201);
+    created.campaigns.push(saved.body.data.id);
+  });
+
+  it('accepts empty optional fields', async () => {
+    const saved = await authed('super', 'post', '/campaigns', {
+      ...payload({ slug: slugFor('empty') }),
+      targetAmountMinor: null,
+      endDate: null,
+      seoTitle: null,
+      seoDescription: null,
+      manualRaisedNote: 'Ledger',
+    });
+
+    expect(saved.status).toBe(201);
+    created.campaigns.push(saved.body.data.id);
+  });
+
+  it('rejects an invalid date with a field-level error', async () => {
+    const response = await authed('super', 'put', `/campaigns/${id}`, {
+      ...payload({}),
+      startDate: 'not-a-date',
+      manualRaisedNote: 'Ledger',
+      version: 1,
+    });
+
+    expect(response.status).toBe(422);
+    expect(response.body.errors.map((e: { path: string }) => e.path)).toContain('startDate');
+  });
+});
+
+describe('scheduled sweep across content types', () => {
+  const suffix = String(Date.now());
+  const made: { activities: string[]; events: string[]; news: string[] } = {
+    activities: [],
+    events: [],
+    news: [],
+  };
+
+  afterAll(async () => {
+    await owner.activity.deleteMany({ where: { id: { in: made.activities } } });
+    await owner.event.deleteMany({ where: { id: { in: made.events } } });
+    await owner.newsPost.deleteMany({ where: { id: { in: made.news } } });
+    await owner.revision.deleteMany({
+      where: { entityId: { in: [...made.activities, ...made.events, ...made.news] } },
+    });
+  });
+
+  const scheduleFor = (iso: string) => ({ action: 'schedule' as const, scheduledFor: iso });
+
+  it('publishes only when due, once, for every content type', async () => {
+    await login('super');
+
+    const future = new Date(Date.now() + 3_600_000).toISOString();
+    const past = new Date(Date.now() - 1000);
+
+    const activity = await authed('super', 'post', '/activities', {
+      title: 'Scheduled activity',
+      slug: `adm-sched-act-${suffix}`,
+      shortDescription: 'An activity scheduled for later publication.',
+      body: 'Body paragraph for the scheduled activity.',
+      category: null,
+      location: null,
+      isFeatured: false,
+      seoTitle: null,
+      seoDescription: null,
+      noindex: false,
+      version: 1,
+    });
+    made.activities.push(activity.body.data.id);
+
+    const event = await authed('super', 'post', '/events', {
+      title: 'Scheduled event',
+      slug: `adm-sched-evt-${suffix}`,
+      description: 'An event scheduled for later publication.',
+      startAt: new Date(Date.now() + 86_400_000).toISOString(),
+      endAt: null,
+      venueName: null,
+      venueAddress: null,
+      registrationUrl: null,
+      isFeatured: false,
+      seoTitle: null,
+      seoDescription: null,
+      noindex: false,
+      version: 1,
+    });
+    made.events.push(event.body.data.id);
+
+    const article = await authed('super', 'post', '/news', {
+      title: 'Scheduled article',
+      slug: `adm-sched-news-${suffix}`,
+      excerpt: 'An article scheduled for later publication.',
+      body: 'Body paragraph for the scheduled article.',
+      categoryId: null,
+      attributionName: null,
+      readingMinutes: 1,
+      seoTitle: null,
+      seoDescription: null,
+      noindex: false,
+      version: 1,
+    });
+    made.news.push(article.body.data.id);
+
+    for (const [kind, created] of [
+      ['activities', activity],
+      ['events', event],
+      ['news', article],
+    ] as const) {
+      const scheduled = await authed(
+        'super',
+        'post',
+        `/${kind}/${String(created.body.data.id)}/status`,
+        scheduleFor(future),
+      );
+      expect(scheduled.status).toBe(200);
+      expect(scheduled.body.data.status).toBe('SCHEDULED');
+    }
+
+    // Nothing is due yet.
+    const early = await publishDueContent(prisma, logger);
+    expect(early.published).toBe(0);
+
+    for (const [kind, created] of [
+      ['activities', activity],
+      ['events', event],
+      ['news', article],
+    ] as const) {
+      const slug = created.body.data.slug;
+      const path =
+        kind === 'news' ? `/api/v1/public/news/${slug}` : `/api/v1/public/${kind}/${slug}`;
+      expect((await request(app).get(path)).status).toBe(404);
+    }
+
+    // Make all three due.
+    await owner.activity.updateMany({
+      where: { id: { in: made.activities } },
+      data: { scheduledFor: past },
+    });
+    await owner.event.updateMany({
+      where: { id: { in: made.events } },
+      data: { scheduledFor: past },
+    });
+    await owner.newsPost.updateMany({
+      where: { id: { in: made.news } },
+      data: { scheduledFor: past },
+    });
+
+    const sweep = await publishDueContent(prisma, logger);
+    expect(sweep.published).toBeGreaterThanOrEqual(3);
+    expect(sweep.failed).toBe(0);
+
+    for (const [kind, created] of [
+      ['activities', activity],
+      ['events', event],
+      ['news', article],
+    ] as const) {
+      const slug = created.body.data.slug;
+      const path =
+        kind === 'news' ? `/api/v1/public/news/${slug}` : `/api/v1/public/${kind}/${slug}`;
+      expect((await request(app).get(path)).status).toBe(200);
+    }
+
+    // A second sweep publishes nothing more.
+    const again = await publishDueContent(prisma, logger);
+    expect(again.published).toBe(0);
+
+    // Publishing wrote exactly one snapshot per item.
+    const revisions = await owner.revision.findMany({
+      where: { entityId: { in: [...made.activities, ...made.events, ...made.news] } },
+    });
+    expect(revisions).toHaveLength(3);
+    expect(revisions.every((row) => row.status === 'PUBLISHED')).toBe(true);
+  });
+});
+
+describe('previews for content modules', () => {
+  it('allows an authorised admin, refuses anonymous, and keeps the draft private', async () => {
+    await login('super');
+
+    const created = await authed('super', 'post', '/activities', {
+      title: 'Preview activity',
+      slug: `adm-preview-${String(Date.now())}`,
+      shortDescription: 'An activity used to check the preview endpoint.',
+      body: 'Body paragraph for preview.',
+      category: null,
+      location: null,
+      isFeatured: false,
+      seoTitle: null,
+      seoDescription: null,
+      noindex: false,
+      version: 1,
+    });
+
+    const id = String(created.body.data.id);
+    const slug = String(created.body.data.slug);
+
+    const preview = await authed('super', 'get', `/activities/${id}/preview`);
+    expect(preview.status).toBe(200);
+    expect(preview.body.data.preview).toBe(true);
+    expect(preview.headers['cache-control']).toContain('no-store');
+
+    const anonymous = await request(app).get(`/api/v1/admin/activities/${id}/preview`);
+    expect(anonymous.status).toBe(401);
+
+    expect((await request(app).get(`/api/v1/public/activities/${slug}`)).status).toBe(404);
+
+    await owner.activity.deleteMany({ where: { id } });
   });
 });
