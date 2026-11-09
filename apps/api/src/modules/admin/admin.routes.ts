@@ -25,13 +25,9 @@ import {
   setSessionCookie,
   withAdmin,
 } from '../../core/auth/middleware.js';
-import {
-  AppError,
-  ForbiddenError,
-  NotFoundError,
-  UnauthorizedError,
-} from '../../core/http/errors.js';
+import { AppError, NotFoundError, UnauthorizedError } from '../../core/http/errors.js';
 import { publishCampaign } from './publishing.js';
+import { createContentAdminRouter } from './admin-content.routes.js';
 
 /**
  * Admin API: authentication and content management.
@@ -142,6 +138,7 @@ export function createAdminRouter({ prisma, config, logger }: AdminRouterDepende
   } as const;
 
   router.use(withAdmin(prisma));
+  router.use(createContentAdminRouter({ prisma, audit }));
 
   /* --------------------------------------------------------------- session */
 
@@ -629,5 +626,3 @@ export function createAdminRouter({ prisma, config, logger }: AdminRouterDepende
 export function requireAdminSession(): express.RequestHandler {
   return requireAdmin();
 }
-
-export { ForbiddenError };

@@ -1,4 +1,4 @@
-import request from 'supertest';
+﻿import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { uuidv7 } from '@gaushala/shared';
@@ -502,5 +502,151 @@ describe('scheduled publishing', () => {
     );
 
     expect(response.status).toBe(422);
+  });
+});
+
+describe('content modules (activities, events, news)', () => {
+  const ids: { activities: string[]; events: string[]; news: string[] } = {
+    activities: [],
+    events: [],
+    news: [],
+  };
+  const suffix = String(Date.now());
+
+  afterAll(async () => {
+    await owner.activity.deleteMany({ where: { id: { in: ids.activities } } });
+    await owner.event.deleteMany({ where: { id: { in: ids.events } } });
+    await owner.newsPost.deleteMany({ where: { id: { in: ids.news } } });
+  });
+
+  const activity = (slug: string) => ({
+    title: 'Admin activity',
+    slug,
+    shortDescription: 'A short description of the activity for the card.',
+    body: 'First paragraph.\n\nSecond paragraph.',
+    category: null,
+    location: null,
+    isFeatured: false,
+    seoTitle: null,
+    seoDescription: null,
+    noindex: false,
+    version: 1,
+  });
+
+  it('creates, publishes and isolates an activity', async () => {
+    await login('super');
+
+    const slug = `adm-activity-${suffix}`;
+    const created = await authed('super', 'post', '/activities', activity(slug));
+    expect(created.status).toBe(201);
+    ids.activities.push(created.body.data.id);
+
+    expect((await request(app).get(`/api/v1/public/activities/${slug}`)).status).toBe(404);
+
+    const published = await authed(
+      'super',
+      'post',
+      `/activities/${String(created.body.data.id)}/status`,
+      {
+        action: 'publish',
+      },
+    );
+    expect(published.status).toBe(200);
+    expect(published.body.data.status).toBe('PUBLISHED');
+
+    const visible = await request(app).get(`/api/v1/public/activities/${slug}`);
+    expect(visible.status).toBe(200);
+    expect(visible.body.data.title).toBe('Admin activity');
+  });
+
+  it('rejects a stale activity version', async () => {
+    const created = await authed(
+      'super',
+      'post',
+      '/activities',
+      activity(`adm-activity-${suffix}-b`),
+    );
+    ids.activities.push(created.body.data.id);
+
+    const stale = await authed('super', 'put', `/activities/${String(created.body.data.id)}`, {
+      ...activity(`adm-activity-${suffix}-b`),
+      version: 99,
+    });
+
+    expect(stale.status).toBe(409);
+  });
+
+  it('creates, publishes and isolates an event', async () => {
+    const slug = `adm-event-${suffix}`;
+    const created = await authed('super', 'post', '/events', {
+      title: 'Admin event',
+      slug,
+      description: 'An event created by the admin regression suite.',
+      startAt: new Date(Date.now() + 86_400_000).toISOString(),
+      endAt: null,
+      venueName: 'Gaushala grounds',
+      venueAddress: null,
+      registrationUrl: null,
+      isFeatured: false,
+      seoTitle: null,
+      seoDescription: null,
+      noindex: false,
+      version: 1,
+    });
+
+    expect(created.status).toBe(201);
+    ids.events.push(created.body.data.id);
+
+    expect((await request(app).get(`/api/v1/public/events/${slug}`)).status).toBe(404);
+
+    await authed('super', 'post', `/events/${String(created.body.data.id)}/status`, {
+      action: 'publish',
+    });
+
+    expect((await request(app).get(`/api/v1/public/events/${slug}`)).status).toBe(200);
+  });
+
+  it('creates and publishes a news article with a category', async () => {
+    const category = await authed('super', 'post', '/news-categories', {
+      name: 'Admin category',
+      slug: `adm-cat-${suffix}`,
+    });
+    expect(category.status).toBe(201);
+
+    const slug = `adm-news-${suffix}`;
+    const created = await authed('super', 'post', '/news', {
+      title: 'Admin article',
+      slug,
+      excerpt: 'An article created by the admin regression suite.',
+      body: 'Article body paragraph.',
+      categoryId: category.body.data.id,
+      attributionName: null,
+      readingMinutes: 2,
+      seoTitle: null,
+      seoDescription: null,
+      noindex: false,
+      version: 1,
+    });
+
+    expect(created.status).toBe(201);
+    ids.news.push(created.body.data.id);
+
+    expect((await request(app).get(`/api/v1/public/news/${slug}`)).status).toBe(404);
+
+    await authed('super', 'post', `/news/${String(created.body.data.id)}/status`, {
+      action: 'publish',
+    });
+
+    const visible = await request(app).get(`/api/v1/public/news/${slug}`);
+    expect(visible.status).toBe(200);
+    expect(visible.body.data.title).toBe('Admin article');
+  });
+
+  it('denies content modules to a user without roles', async () => {
+    await login('norole');
+
+    expect((await authed('norole', 'get', '/activities')).status).toBe(403);
+    expect((await authed('norole', 'get', '/events')).status).toBe(403);
+    expect((await authed('norole', 'get', '/news')).status).toBe(403);
   });
 });
