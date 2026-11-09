@@ -1,3 +1,5 @@
+import Link from 'next/link';
+
 import { Badge } from '@/components/ui';
 import { ApiAction } from '@/components/admin/api-action';
 import { adminGet } from '@/lib/admin';
@@ -32,6 +34,15 @@ export default async function ImpactPage() {
         </p>
       </header>
 
+      <div>
+        <Link
+          href="/admin/impact/new"
+          className="rounded-lg bg-terracotta px-4 py-2 text-[length:var(--text-label)] font-medium text-white hover:bg-terracotta-ink"
+        >
+          New statistic
+        </Link>
+      </div>
+
       {rows.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-sand bg-white/60 p-8 text-center">
           <p className="text-subheading text-cocoa">No statistics recorded</p>
@@ -45,10 +56,13 @@ export default async function ImpactPage() {
             <li key={row.id} className="rounded-2xl border border-sand bg-white p-4 shadow-soft">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <p className="text-[length:var(--text-label)] font-medium text-cocoa">
+                  <Link
+                    href={`/admin/impact/${row.id}`}
+                    className="text-[length:var(--text-label)] font-medium text-cocoa hover:underline"
+                  >
                     {row.value.toLocaleString('en-IN')}
                     {row.unit === null ? '' : ` ${row.unit}`} — {row.label}
-                  </p>
+                  </Link>
                   <p className="text-[length:var(--text-caption)] text-muted">
                     Order {row.displayOrder}
                   </p>

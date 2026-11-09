@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 
 import { Badge } from '@/components/ui';
 import { ApiAction } from '@/components/admin/api-action';
+import { AssignForm } from '@/components/admin/batch2-forms';
 import { adminGet } from '@/lib/admin';
 
 export const dynamic = 'force-dynamic';
@@ -33,6 +34,7 @@ interface Detail {
 export default async function EnquiryDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const row = await adminGet<Detail>(`/enquiries/${id}`);
+  const assignees = await adminGet<{ id: string; name: string }[]>('/enquiries/assignees');
 
   if (row === null) notFound();
 
@@ -82,6 +84,22 @@ export default async function EnquiryDetailPage({ params }: { params: Promise<{ 
           {row.message}
         </p>
       </section>
+
+      {assignees === null ? null : (
+        <section className="rounded-2xl border border-sand bg-white p-5 shadow-soft">
+          <h2 className="text-subheading text-cocoa">Assignment</h2>
+          <p className="text-body-sm mt-1 text-muted">
+            Current: {row.assignedTo === null ? 'unassigned' : row.assignedTo.name}
+          </p>
+          <div className="mt-3 max-w-sm">
+            <AssignForm
+              enquiryId={row.id}
+              current={row.assignedTo?.id ?? null}
+              assignees={assignees}
+            />
+          </div>
+        </section>
+      )}
 
       <section className="rounded-2xl border border-sand bg-white p-5 shadow-soft">
         <h2 className="text-subheading text-cocoa">Update status</h2>

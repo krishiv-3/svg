@@ -170,6 +170,20 @@ export function createBatch2Router({ prisma, audit }: Batch2Dependencies): Route
     },
   );
 
+  router.get(
+    '/testimonials/:id/preview',
+    requirePermission('testimonial.read'),
+    async (request, response) => {
+      const row = await prisma.testimonial.findFirst({ where: { id: String(request.params.id) } });
+      if (row === null) throw new NotFoundError('Testimonial not found');
+
+      response
+        .setHeader('Cache-Control', 'no-store, private')
+        .status(200)
+        .json({ data: { ...toTestimonial(row), preview: true } });
+    },
+  );
+
   router.post(
     '/testimonials',
     requirePermission('testimonial.create'),
@@ -385,6 +399,26 @@ export function createBatch2Router({ prisma, audit }: Batch2Dependencies): Route
         updatedAt: row.updatedAt.toISOString(),
       })),
     });
+  });
+
+  router.get('/impact/:id/preview', requirePermission('impact.read'), async (request, response) => {
+    const row = await prisma.impactStat.findFirst({
+      where: { id: String(request.params.id), deletedAt: null },
+    });
+
+    if (row === null) throw new NotFoundError('Statistic not found');
+
+    response
+      .setHeader('Cache-Control', 'no-store, private')
+      .status(200)
+      .json({
+        data: {
+          ...row,
+          value: Number(row.value),
+          verifiedAt: row.verifiedAt?.toISOString() ?? null,
+          preview: true,
+        },
+      });
   });
 
   router.post(
@@ -611,6 +645,21 @@ export function createBatch2Router({ prisma, audit }: Batch2Dependencies): Route
       data: rows.map((row) => ({ ...row, createdAt: row.createdAt.toISOString() })),
     });
   });
+
+  /** Active administrators who may be assigned an enquiry (no sensitive fields). */
+  router.get(
+    '/enquiries/assignees',
+    requirePermission('enquiry.assign'),
+    async (_request, response) => {
+      const rows = await prisma.user.findMany({
+        where: { status: 'ACTIVE', deletedAt: null },
+        orderBy: { name: 'asc' },
+        select: { id: true, name: true },
+      });
+
+      response.status(200).json({ data: rows });
+    },
+  );
 
   router.get('/enquiries/:id', requirePermission('enquiry.read'), async (request, response) => {
     const row = await prisma.enquiry.findUnique({

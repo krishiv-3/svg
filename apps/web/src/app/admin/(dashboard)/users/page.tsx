@@ -1,4 +1,5 @@
 import { Badge } from '@/components/ui';
+import { RoleEditor } from '@/components/admin/batch2-forms';
 import { InviteForm } from '@/components/admin/invite-form';
 import { ApiAction } from '@/components/admin/api-action';
 import { adminGet } from '@/lib/admin';
@@ -95,6 +96,11 @@ export default async function UsersPage() {
                       path={`/users/${user.id}/revoke-sessions`}
                       variant="ghost"
                       confirmText="Sign this administrator out of every device?"
+                    />
+                    <RoleEditor
+                      userId={user.id}
+                      roles={payload.roles}
+                      current={user.roles.map((role) => role.key)}
                     />
                   </div>
                 </td>

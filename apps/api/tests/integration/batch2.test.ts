@@ -1,4 +1,4 @@
-import request from 'supertest';
+﻿import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { uuidv7 } from '@gaushala/shared';
@@ -455,5 +455,209 @@ describe('site settings', () => {
       .send({ value: { name: 'No CSRF' } });
 
     expect(response.status).toBe(403);
+  });
+});
+
+describe('batch 2.1 admin interfaces', () => {
+  let testimonialId = '';
+  let impactId = '';
+
+  it('creates a pending testimonial and edits it without approving', async () => {
+    const created = await call(superAdmin, 'post', '/testimonials', {
+      displayName: 'Edited supporter',
+      location: null,
+      body: 'Original words supplied by the supporter with consent recorded.',
+      consentEvidence: 'Signed form on file, reference 42',
+      consentDate: '2026-02-01',
+      displayOrder: 3,
+      mediaId: null,
+    });
+
+    expect(created.status).toBe(201);
+    testimonialId = created.body.data.id;
+    cleanup.testimonials.push(testimonialId);
+
+    const edited = await call(superAdmin, 'put', `/testimonials/${testimonialId}`, {
+      displayName: 'Edited supporter',
+      location: 'Jaipur',
+      body: 'Corrected words supplied by the supporter with consent recorded.',
+      consentEvidence: 'Signed form on file, reference 42',
+      consentDate: '2026-02-01',
+      displayOrder: 4,
+      mediaId: null,
+    });
+
+    expect(edited.status).toBe(200);
+    expect(edited.body.data.displayOrder).toBe(4);
+    expect(edited.body.data.approvalStatus).toBe('PENDING');
+    expect(edited.body.data.isVisible).toBe(false);
+  });
+
+  it('still refuses approval when consent evidence is blank', async () => {
+    const created = await call(superAdmin, 'post', '/testimonials', {
+      displayName: 'No evidence',
+      location: null,
+      body: 'Words without any recorded consent evidence attached to the record.',
+      consentEvidence: 'placeholder',
+      consentDate: '2026-02-01',
+      displayOrder: 9,
+      mediaId: null,
+    });
+
+    cleanup.testimonials.push(created.body.data.id);
+
+    // Remove the evidence directly, as a corrupted import could.
+    await owner.testimonial.update({
+      where: { id: created.body.data.id },
+      data: { consentEvidence: '   ' },
+    });
+
+    const approve = await call(
+      superAdmin,
+      'post',
+      `/testimonials/${String(created.body.data.id)}/approval`,
+      {
+        action: 'approve',
+      },
+    );
+
+    expect(approve.status).toBe(409);
+  });
+
+  it('previews a draft testimonial for an authorised admin only', async () => {
+    const preview = await call(superAdmin, 'get', `/testimonials/${testimonialId}/preview`);
+    expect(preview.status).toBe(200);
+    expect(preview.body.data.preview).toBe(true);
+    expect(preview.headers['cache-control']).toContain('no-store');
+
+    const anonymous = await request(app).get(`/api/v1/admin/testimonials/${testimonialId}/preview`);
+    expect(anonymous.status).toBe(401);
+
+    expect((await call(noRole, 'get', `/testimonials/${testimonialId}/preview`)).status).toBe(403);
+
+    // It is not public while pending.
+    const publicList = await request(app).get('/api/v1/public/testimonials');
+    expect(
+      (publicList.body.data as { displayName: string }[]).some(
+        (row) => row.displayName === 'Edited supporter',
+      ),
+    ).toBe(false);
+  });
+
+  it('creates and edits an impact statistic, invalidating verification', async () => {
+    const created = await call(superAdmin, 'post', '/impact', {
+      label: 'Water points installed (test)',
+      value: 12,
+      unit: 'points',
+      methodology: 'Counted from the installation register for the period.',
+      sourceNote: 'Register 2026',
+      periodLabel: '2025-26',
+      displayOrder: 2,
+    });
+
+    expect(created.status).toBe(201);
+    impactId = created.body.data.id;
+    cleanup.impact.push(impactId);
+
+    await call(superAdmin, 'post', `/impact/${impactId}/verification`, { verified: true });
+    await call(superAdmin, 'post', `/impact/${impactId}/visibility`, { visible: true });
+
+    const edited = await call(superAdmin, 'put', `/impact/${impactId}`, {
+      label: 'Water points installed (test)',
+      value: 14,
+      unit: 'points',
+      methodology: 'Counted from the installation register for the period.',
+      sourceNote: 'Register 2026',
+      periodLabel: '2025-26',
+      displayOrder: 2,
+    });
+
+    expect(edited.status).toBe(200);
+    expect(edited.body.data.verificationStatus).toBe('DRAFT');
+    expect(edited.body.data.isVisible).toBe(false);
+
+    const publicList = await request(app).get('/api/v1/public/impact');
+    expect(
+      (publicList.body.data as { label: string }[]).some(
+        (row) => row.label === 'Water points installed (test)',
+      ),
+    ).toBe(false);
+  });
+
+  it('previews an impact statistic with private caching', async () => {
+    const preview = await call(superAdmin, 'get', `/impact/${impactId}/preview`);
+    expect(preview.status).toBe(200);
+    expect(preview.body.data.preview).toBe(true);
+    expect(preview.headers['cache-control']).toContain('no-store');
+  });
+
+  it('assigns an enquiry and lists assignees for authorised staff only', async () => {
+    const enquiryId = cleanup.enquiries[0] ?? '';
+
+    const assignees = await call(superAdmin, 'get', '/enquiries/assignees');
+    expect(assignees.status).toBe(200);
+    expect(Array.isArray(assignees.body.data)).toBe(true);
+    expect((assignees.body.data as { name: string }[]).length).toBeGreaterThan(0);
+
+    const assigned = await call(superAdmin, 'post', `/enquiries/${enquiryId}/assign`, {
+      userId: editor.id,
+    });
+
+    expect(assigned.status).toBe(200);
+    expect(assigned.body.data.assignedToId).toBe(editor.id);
+
+    const unassigned = await call(superAdmin, 'post', `/enquiries/${enquiryId}/assign`, {
+      userId: null,
+    });
+    expect(unassigned.status).toBe(200);
+    expect(unassigned.body.data.assignedToId).toBeNull();
+
+    expect((await call(noRole, 'get', '/enquiries/assignees')).status).toBe(403);
+  });
+
+  it('updates an administrator role set', async () => {
+    const response = await call(superAdmin, 'post', `/users/${editor.id}/roles`, {
+      roleKeys: ['donation_manager'],
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body.data.roles.map((role: { key: string }) => role.key)).toEqual([
+      'donation_manager',
+    ]);
+
+    // Restore the original role for the remaining assertions.
+    await call(superAdmin, 'post', `/users/${editor.id}/roles`, { roleKeys: ['content_editor'] });
+  });
+
+  it('rejects an unknown role key', async () => {
+    const response = await call(superAdmin, 'post', `/users/${editor.id}/roles`, {
+      roleKeys: ['not_a_role'],
+    });
+
+    expect(response.status).toBe(422);
+  });
+
+  it('refuses assignment to a deactivated administrator', async () => {
+    const target = await call(superAdmin, 'post', '/users/invite', {
+      email: `inactive-${PREFIX}@example.test`,
+      name: 'Inactive Admin',
+      roleKeys: ['content_editor'],
+    });
+
+    cleanup.users.push(target.body.data.id);
+    await call(superAdmin, 'post', `/users/${String(target.body.data.id)}/status`, {
+      status: 'DISABLED',
+    });
+
+    const response = await call(
+      superAdmin,
+      'post',
+      `/enquiries/${cleanup.enquiries[0] ?? ''}/assign`,
+      {
+        userId: target.body.data.id,
+      },
+    );
+
+    expect(response.status).toBe(404);
   });
 });
