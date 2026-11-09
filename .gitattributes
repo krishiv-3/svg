@@ -1,0 +1,16 @@
+# Normalise line endings so Windows and Linux checkouts agree.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.avif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+
+# Keep Windows scripts CRLF-free too; PowerShell handles LF fine.
+*.ps1 text eol=lf
+*.cmd text eol=crlf
+*.bat text eol=crlf

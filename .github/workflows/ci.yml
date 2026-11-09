@@ -1,0 +1,112 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '24'
+  PNPM_VERSION: '11.28.5'
+
+jobs:
+  verify:
+    name: Lint, typecheck, test, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+
+    env:
+      # The three-role model, created by `pnpm db:bootstrap`.
+      ADMIN_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+      MIGRATE_DATABASE_URL: postgresql://gaushala_owner:gaushala_owner_dev@localhost:5432/gaushala_dev
+      DATABASE_URL: postgresql://gaushala_app:gaushala_app_dev@localhost:5432/gaushala_dev
+      TEST_MIGRATE_DATABASE_URL: postgresql://gaushala_owner:gaushala_owner_dev@localhost:5432/gaushala_test
+      TEST_DATABASE_URL: postgresql://gaushala_app:gaushala_app_dev@localhost:5432/gaushala_test
+      APP_VERSION: 0.0.0-ci
+      GIT_SHA: ${{ github.sha }}
+      # The web build requires an absolute https site URL in production mode.
+      # CI uses a reserved example domain, never a real deployment host.
+      NEXT_PUBLIC_SITE_URL: https://ci.example.invalid
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build shared contracts
+        run: pnpm --filter @gaushala/shared build
+
+      - name: Generate Prisma client
+        run: pnpm --filter @gaushala/api generate
+
+      - name: Create roles and databases
+        run: pnpm db:bootstrap
+
+      - name: Apply migrations
+        run: pnpm db:migrate:all
+
+      - name: Seed reference data
+        run: pnpm db:seed
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Verify design tokens
+        run: pnpm check:tokens
+
+      - name: Formatting
+        run: pnpm format:check
+
+      - name: Unit tests
+        run: pnpm test:unit
+
+      - name: Integration tests
+        run: pnpm test:integration
+        env:
+          # Integration tests must target the test database, never development.
+          NODE_ENV: test
+          APP_ENV: test
+          DATABASE_URL: postgresql://gaushala_app:gaushala_app_dev@localhost:5432/gaushala_test
+          MIGRATE_DATABASE_URL: postgresql://gaushala_owner:gaushala_owner_dev@localhost:5432/gaushala_test
+
+      - name: Build
+        run: pnpm build

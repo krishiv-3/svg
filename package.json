@@ -1,0 +1,48 @@
+{
+  "name": "gaushala",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Shri Vanshidhar Gaushala — public website, CMS and donation management",
+  "packageManager": "pnpm@11.28.5",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test:unit test:integration",
+    "test:unit": "turbo run test:unit",
+    "test:integration": "turbo run test:integration",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check:tokens": "node scripts/check-tokens.mjs",
+    "check:responsive": "node scripts/check-responsive.mjs",
+    "check:console": "node scripts/check-console.mjs",
+    "capture": "node scripts/capture-screenshots.mjs",
+    "verify": "pnpm lint && pnpm typecheck && pnpm check:tokens",
+    "db:start": "node scripts/dev-db.mjs start",
+    "db:stop": "node scripts/dev-db.mjs stop",
+    "db:status": "node scripts/dev-db.mjs status",
+    "db:bootstrap": "node scripts/db-bootstrap.mjs",
+    "db:migrate:all": "node scripts/db-migrate.mjs",
+    "db:migrate": "pnpm --filter @gaushala/api db:migrate",
+    "db:seed": "pnpm --filter @gaushala/api db:seed",
+    "db:setup": "pnpm db:start && pnpm --filter @gaushala/shared build && pnpm db:bootstrap && pnpm db:migrate:all && pnpm db:seed",
+    "clean": "node scripts/clean.mjs apps/api apps/web packages/shared"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "24.10.1",
+    "embedded-postgres": "18.6.0-beta.19",
+    "eslint": "10.14.0",
+    "eslint-config-prettier": "10.1.8",
+    "eslint-plugin-react-hooks": "7.1.0",
+    "pg": "8.23.1",
+    "prettier": "3.9.10",
+    "turbo": "2.11.10",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.72.1"
+  }
+}

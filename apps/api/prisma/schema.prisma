@@ -1,0 +1,782 @@
+// Shri Vanshidhar Gaushala — database schema
+//
+// Phase 2 added identity and settings. Phase 6 adds the content, media and
+// enquiry tables that back the public site. Donations/payments (Phase 9) and
+// sessions/auth (Phase 7) are still absent by design — see
+// docs/DATABASE_DESIGN.md §3.2 for the full 44-table inventory and which phase
+// owns each group.
+//
+// Conventions (docs/DATABASE_DESIGN.md §2):
+//  - snake_case columns, plural table names
+//  - UUIDv7 primary keys generated in application code (packages/shared uuidv7)
+//  - timestamptz everywhere
+//  - money columns are BIGINT minor units (ADR-007); `impact_stats.value` is a
+//    statistic, not money, so it uses numeric(18,2)
+//  - published content is gated by `status` + explicit timestamps; the CHECK
+//    constraints that make invalid states impossible live in the hand-written
+//    migration, because Prisma cannot express them
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserStatus {
+  INVITED
+  ACTIVE
+  SUSPENDED
+  DISABLED
+
+  @@map("user_status")
+}
+
+enum PermissionEffect {
+  GRANT
+  DENY
+
+  @@map("permission_effect")
+}
+
+/// An administrator or staff member. Accounts are invitation-only: no public
+/// sign-up exists (docs/SECURITY_PLAN.md SEC-AUTH-03).
+model User {
+  id                 String     @id @db.Uuid
+  /// Stored lowercased; a database CHECK enforces the invariant.
+  email              String     @unique @db.VarChar(254)
+  name               String     @db.VarChar(120)
+  status             UserStatus @default(INVITED)
+  isSuperAdmin       Boolean    @default(false) @map("is_super_admin")
+  passwordHash       String?    @map("password_hash")
+  passwordUpdatedAt  DateTime?  @map("password_updated_at") @db.Timestamptz(6)
+  mustChangePassword Boolean    @default(false) @map("must_change_password")
+  mfaRequired        Boolean    @default(false) @map("mfa_required")
+  lastLoginAt        DateTime?  @map("last_login_at") @db.Timestamptz(6)
+  createdAt          DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt          DateTime?  @map("deleted_at") @db.Timestamptz(6)
+
+  roles               UserRole[]
+  permissionOverrides UserPermission[]
+
+  // Content authorship and review relations (Phase 6).
+  uploadedMedia        Media[]       @relation("MediaUploader")
+  revisions            Revision[]    @relation("RevisionCreator")
+  authoredNews         NewsPost[]    @relation("NewsAuthor")
+  verifiedImpactStats  ImpactStat[]  @relation("ImpactVerifier")
+  approvedTestimonials Testimonial[] @relation("TestimonialApprover")
+  assignedEnquiries    Enquiry[]     @relation("EnquiryAssignee")
+
+  @@index([status])
+  @@index([deletedAt])
+  @@map("users")
+}
+
+/// A named bundle of permissions. System templates cannot be deleted.
+model Role {
+  id          String   @id @db.Uuid
+  key         String   @unique @db.VarChar(64)
+  name        String   @db.VarChar(120)
+  description String?
+  isSystem    Boolean  @default(false) @map("is_system")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  permissions RolePermission[]
+  users       UserRole[]
+
+  @@index([isSystem])
+  @@map("roles")
+}
+
+/// A single authorisation capability, e.g. `donation.refund`.
+/// Seeded from packages/shared/src/permissions/permissions.ts so the database
+/// and the route guards can never disagree.
+model Permission {
+  id          String   @id @db.Uuid
+  key         String   @unique @db.VarChar(80)
+  resource    String   @db.VarChar(40)
+  action      String   @db.VarChar(40)
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  roles   RolePermission[]
+  users   UserPermission[]
+
+  @@index([resource])
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String @map("role_id") @db.Uuid
+  permissionId String @map("permission_id") @db.Uuid
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@index([permissionId])
+  @@map("role_permissions")
+}
+
+model UserRole {
+  userId     String   @map("user_id") @db.Uuid
+  roleId     String   @map("role_id") @db.Uuid
+  assignedAt DateTime @default(now()) @map("assigned_at") @db.Timestamptz(6)
+  assignedBy String?  @map("assigned_by") @db.Uuid
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+  @@index([roleId])
+  @@map("user_roles")
+}
+
+/// Per-user permission override. DENY always wins over any role grant
+/// (docs/ARCHITECTURE.md §10.1).
+model UserPermission {
+  userId       String           @map("user_id") @db.Uuid
+  permissionId String           @map("permission_id") @db.Uuid
+  effect       PermissionEffect
+  reason       String           @db.VarChar(400)
+  grantedAt    DateTime         @default(now()) @map("granted_at") @db.Timestamptz(6)
+  grantedBy    String?          @map("granted_by") @db.Uuid
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([userId, permissionId])
+  @@index([permissionId])
+  @@map("user_permissions")
+}
+
+/// Typed settings groups (docs/DATABASE_DESIGN.md §9.1). No secrets are ever
+/// stored here — provider credentials live in the environment.
+model Setting {
+  key         String   @id @db.VarChar(80)
+  category    String   @db.VarChar(40)
+  value       Json
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([category])
+  @@map("settings")
+}
+
+/* ========================================================================== */
+/* Phase 6 — content, media and enquiries                                     */
+/* ========================================================================== */
+
+/// Publishing lifecycle shared by every content entity.
+/// Visibility rule (docs/SECURITY_PLAN.md): only PUBLISHED rows whose
+/// `published_at` is in the past are ever served publicly.
+enum ContentStatus {
+  DRAFT
+  SCHEDULED
+  PUBLISHED
+  ARCHIVED
+
+  @@map("content_status")
+}
+
+enum PageKind {
+  STANDARD
+  HOMEPAGE
+  POLICY
+
+  @@map("page_kind")
+}
+
+enum PageTemplate {
+  GENERIC
+  HOMEPAGE
+  CONTACT
+
+  @@map("page_template")
+}
+
+/// Entities that can carry an immutable revision snapshot.
+enum RevisionEntity {
+  PAGE
+  ACTIVITY
+  NEWS
+  EVENT
+  CAMPAIGN
+  IMPACT
+  TESTIMONIAL
+  SETTING
+
+  @@map("revision_entity")
+}
+
+enum RevisionStatus {
+  DRAFT
+  PUBLISHED
+  SUPERSEDED
+
+  @@map("revision_status")
+}
+
+/// Operational state of an event, distinct from its publishing status.
+enum EventStatus {
+  SCHEDULED
+  COMPLETED
+  CANCELLED
+  POSTPONED
+
+  @@map("event_status")
+}
+
+enum RegistrationMode {
+  NONE
+  CONTACT
+  EXTERNAL_URL
+  ENQUIRY_FORM
+
+  @@map("registration_mode")
+}
+
+/// How a campaign's raised amount is derived. MANUAL is audited and requires a
+/// stated note; VERIFIED_DONATIONS is the default and the only value allowed
+/// once donations exist (Phase 9).
+enum ProgressSource {
+  VERIFIED_DONATIONS
+  MANUAL
+
+  @@map("progress_source")
+}
+
+enum ImpactVerificationStatus {
+  DRAFT
+  VERIFIED
+
+  @@map("impact_verification_status")
+}
+
+enum TestimonialApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+
+  @@map("testimonial_approval_status")
+}
+
+enum MediaKind {
+  IMAGE
+  VIDEO
+  DOCUMENT
+
+  @@map("media_kind")
+}
+
+enum MediaStatus {
+  PROCESSING
+  READY
+  FAILED
+
+  @@map("media_status")
+}
+
+enum MediaCategoryKind {
+  GALLERY
+  DOCUMENT
+
+  @@map("media_category_kind")
+}
+
+enum EnquiryType {
+  CONTACT
+  VOLUNTEER
+  VISIT
+  EVENT_REGISTRATION
+  DONATION_SUPPORT
+  GENERAL
+
+  @@map("enquiry_type")
+}
+
+enum EnquiryStatus {
+  NEW
+  IN_PROGRESS
+  RESOLVED
+  SPAM
+  ARCHIVED
+
+  @@map("enquiry_status")
+}
+
+/* -------------------------------------------------------------------------- */
+/* Media                                                                      */
+/* -------------------------------------------------------------------------- */
+
+/// A gallery/document grouping. Serves as the "gallery album" concept: public
+/// gallery items are READY, public IMAGE rows inside a GALLERY category.
+model MediaCategory {
+  id          String            @id @db.Uuid
+  name        String            @db.VarChar(80)
+  slug        String            @unique @db.VarChar(80)
+  kind        MediaCategoryKind @default(GALLERY)
+  description String?
+  sortOrder   Int               @default(0) @map("sort_order")
+  createdAt   DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  media Media[]
+
+  @@index([kind, sortOrder])
+  @@map("media_categories")
+}
+
+/// Media metadata only — the binary lives in object storage (R2/S3), never in
+/// PostgreSQL. `storage_key` is opaque to the database and resolved by the
+/// storage adapter in Phase 6E.
+model Media {
+  id               String      @id @db.Uuid
+  storageKey       String      @unique @map("storage_key") @db.VarChar(500)
+  bucket           String      @default("public") @db.VarChar(80)
+  originalFilename String      @map("original_filename") @db.VarChar(300)
+  /// Verified from the bytes on upload, never trusted from the client.
+  mimeType         String      @map("mime_type") @db.VarChar(100)
+  sizeBytes        BigInt      @map("size_bytes")
+  width            Int?
+  height           Int?
+  checksumSha256   String      @map("checksum_sha256") @db.Char(64)
+  blurhash         String?     @db.VarChar(120)
+  focalX           Decimal?    @map("focal_x") @db.Decimal(4, 3)
+  focalY           Decimal?    @map("focal_y") @db.Decimal(4, 3)
+  altText          String?     @map("alt_text") @db.VarChar(300)
+  caption          String?     @db.VarChar(400)
+  credit           String?     @db.VarChar(200)
+  categoryId       String?     @map("category_id") @db.Uuid
+  kind             MediaKind
+  isPublic         Boolean     @default(false) @map("is_public")
+  status           MediaStatus @default(PROCESSING)
+  replacedAt       DateTime?   @map("replaced_at") @db.Timestamptz(6)
+  uploadedById     String?     @map("uploaded_by") @db.Uuid
+  capturedAt       DateTime?   @map("captured_at") @db.Date
+  createdAt        DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt        DateTime?   @map("deleted_at") @db.Timestamptz(6)
+
+  category MediaCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  uploader User?          @relation("MediaUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  pageHeroes          Page[]           @relation("PageHero")
+  activities          Activity[]       @relation("ActivityMedia")
+  newsCovers          NewsPost[]       @relation("NewsCover")
+  eventPosters        Event[]          @relation("EventPoster")
+  campaignCovers      Campaign[]       @relation("CampaignCover")
+  campaignUpdateMedia CampaignUpdate[] @relation("CampaignUpdateMedia")
+  testimonialMedia    Testimonial[]    @relation("TestimonialMedia")
+
+  @@index([categoryId, createdAt(sort: Desc)])
+  @@index([checksumSha256])
+  @@index([status])
+  @@index([kind, isPublic])
+  @@map("media")
+}
+
+/* -------------------------------------------------------------------------- */
+/* Pages and sections                                                         */
+/* -------------------------------------------------------------------------- */
+
+/// Static pages and the homepage (`kind = HOMEPAGE`, empty slug). Sections
+/// carry the ordered, typed blocks so the homepage composition is data, not code.
+model Page {
+  id                String        @id @db.Uuid
+  kind              PageKind      @default(STANDARD)
+  slug              String        @db.VarChar(160)
+  title             String        @db.VarChar(200)
+  summary           String?
+  /// Editor JSON document, never raw HTML.
+  body              Json?
+  template          PageTemplate  @default(GENERIC)
+  heroMediaId       String?       @map("hero_media_id") @db.Uuid
+  heroAlt           String?       @map("hero_alt") @db.VarChar(300)
+  status            ContentStatus @default(DRAFT)
+  publishedAt       DateTime?     @map("published_at") @db.Timestamptz(6)
+  scheduledFor      DateTime?     @map("scheduled_for") @db.Timestamptz(6)
+  unpublishedAt     DateTime?     @map("unpublished_at") @db.Timestamptz(6)
+  currentRevisionId String?       @map("current_revision_id") @db.Uuid
+  version           Int           @default(1)
+  seoTitle          String?       @map("seo_title") @db.VarChar(70)
+  seoDescription    String?       @map("seo_description") @db.VarChar(180)
+  canonicalUrl      String?       @map("canonical_url")
+  ogImageId         String?       @map("og_image_id") @db.Uuid
+  noindex           Boolean       @default(false)
+  structuredData    Json?         @map("structured_data")
+  createdById       String?       @map("created_by") @db.Uuid
+  updatedById       String?       @map("updated_by") @db.Uuid
+  createdAt         DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt         DateTime?     @map("deleted_at") @db.Timestamptz(6)
+
+  heroMedia   Media?    @relation("PageHero", fields: [heroMediaId], references: [id], onDelete: SetNull)
+  sections    PageSection[]
+
+  // `current_revision_id` is deliberately a plain UUID column here: it points at
+  // the shared, polymorphic `revisions` table. The foreign key and its
+  // ON DELETE SET NULL behaviour are added in the hand-written migration so all
+  // five publishing entities use exactly the same rule.
+
+  @@index([kind])
+  @@index([status, scheduledFor])
+  @@index([status, publishedAt(sort: Desc)])
+  @@map("pages")
+}
+
+model PageSection {
+  id            String   @id @db.Uuid
+  pageId        String   @map("page_id") @db.Uuid
+  /// Block type from the registry (`hero`, `impact`, `latest_news`, …).
+  type          String   @db.VarChar(40)
+  schemaVersion Int      @default(1) @map("schema_version")
+  sortOrder     Int      @map("sort_order")
+  isVisible     Boolean  @default(true) @map("is_visible")
+  /// Zod-validated per (type, schemaVersion); an object, never an array.
+  content       Json     @default("{}")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  page Page @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@unique([pageId, sortOrder])
+  @@index([pageId])
+  @@map("page_sections")
+}
+
+/// Immutable snapshot of an entity at a point in time. Polymorphic by
+/// (entity_type, entity_id): the trade-off is documented in the design doc.
+model Revision {
+  id          String         @id @db.Uuid
+  entityType  RevisionEntity @map("entity_type")
+  entityId    String         @map("entity_id") @db.Uuid
+  version     Int
+  status      RevisionStatus
+  snapshot    Json
+  changeNote  String?        @map("change_note") @db.VarChar(300)
+  createdById String?        @map("created_by") @db.Uuid
+  createdAt   DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  publishedAt DateTime?      @map("published_at") @db.Timestamptz(6)
+
+  creator User? @relation("RevisionCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@unique([entityType, entityId, version])
+  @@index([entityType, entityId, createdAt(sort: Desc)])
+  @@map("revisions")
+}
+
+/* -------------------------------------------------------------------------- */
+/* Activities                                                                 */
+/* -------------------------------------------------------------------------- */
+
+model Activity {
+  id                String        @id @db.Uuid
+  title             String        @db.VarChar(200)
+  slug              String        @db.VarChar(160)
+  shortDescription  String        @map("short_description") @db.VarChar(400)
+  body              Json?
+  category          String?       @db.VarChar(60)
+  mediaId           String?       @map("media_id") @db.Uuid
+  mediaAlt          String?       @map("media_alt") @db.VarChar(300)
+  activityDate      DateTime?     @map("activity_date") @db.Date
+  location          String?       @db.VarChar(200)
+  isFeatured        Boolean       @default(false) @map("is_featured")
+  status            ContentStatus @default(DRAFT)
+  publishedAt       DateTime?     @map("published_at") @db.Timestamptz(6)
+  scheduledFor      DateTime?     @map("scheduled_for") @db.Timestamptz(6)
+  unpublishedAt     DateTime?     @map("unpublished_at") @db.Timestamptz(6)
+  currentRevisionId String?       @map("current_revision_id") @db.Uuid
+  version           Int           @default(1)
+  seoTitle          String?       @map("seo_title") @db.VarChar(70)
+  seoDescription    String?       @map("seo_description") @db.VarChar(180)
+  canonicalUrl      String?       @map("canonical_url")
+  ogImageId         String?       @map("og_image_id") @db.Uuid
+  noindex           Boolean       @default(false)
+  createdById       String?       @map("created_by") @db.Uuid
+  updatedById       String?       @map("updated_by") @db.Uuid
+  createdAt         DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt         DateTime?     @map("deleted_at") @db.Timestamptz(6)
+
+  media Media? @relation("ActivityMedia", fields: [mediaId], references: [id], onDelete: SetNull)
+
+  @@index([status, publishedAt(sort: Desc)])
+  @@index([isFeatured])
+  @@map("activities")
+}
+
+/* -------------------------------------------------------------------------- */
+/* News                                                                       */
+/* -------------------------------------------------------------------------- */
+
+model NewsCategory {
+  id          String   @id @db.Uuid
+  name        String   @db.VarChar(80)
+  slug        String   @unique @db.VarChar(80)
+  description String?
+  sortOrder   Int      @default(0) @map("sort_order")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  posts NewsPost[]
+
+  @@map("news_categories")
+}
+
+model NewsPost {
+  id                String        @id @db.Uuid
+  title             String        @db.VarChar(200)
+  slug              String        @db.VarChar(160)
+  excerpt           String        @db.VarChar(400)
+  body              Json
+  coverMediaId      String?       @map("cover_media_id") @db.Uuid
+  coverAlt          String?       @map("cover_alt") @db.VarChar(300)
+  categoryId        String?       @map("category_id") @db.Uuid
+  authorUserId      String?       @map("author_user_id") @db.Uuid
+  attributionName   String?       @map("attribution_name") @db.VarChar(120)
+  readingMinutes    Int?          @map("reading_minutes")
+  status            ContentStatus @default(DRAFT)
+  publishedAt       DateTime?     @map("published_at") @db.Timestamptz(6)
+  /// Only changes on a substantive edit, so a page never looks fresher than it is.
+  updatedDisplayAt  DateTime?     @map("updated_display_at") @db.Timestamptz(6)
+  scheduledFor      DateTime?     @map("scheduled_for") @db.Timestamptz(6)
+  unpublishedAt     DateTime?     @map("unpublished_at") @db.Timestamptz(6)
+  currentRevisionId String?       @map("current_revision_id") @db.Uuid
+  version           Int           @default(1)
+  seoTitle          String?       @map("seo_title") @db.VarChar(70)
+  seoDescription    String?       @map("seo_description") @db.VarChar(180)
+  canonicalUrl      String?       @map("canonical_url")
+  ogImageId         String?       @map("og_image_id") @db.Uuid
+  noindex           Boolean       @default(false)
+  createdById       String?       @map("created_by") @db.Uuid
+  updatedById       String?       @map("updated_by") @db.Uuid
+  createdAt         DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt         DateTime?     @map("deleted_at") @db.Timestamptz(6)
+
+  cover    Media?        @relation("NewsCover", fields: [coverMediaId], references: [id], onDelete: SetNull)
+  category NewsCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  author   User?         @relation("NewsAuthor", fields: [authorUserId], references: [id], onDelete: SetNull)
+
+  @@index([status, publishedAt(sort: Desc)])
+  @@index([categoryId, status])
+  @@map("news_posts")
+}
+
+/* -------------------------------------------------------------------------- */
+/* Events                                                                     */
+/* -------------------------------------------------------------------------- */
+
+model Event {
+  id                String           @id @db.Uuid
+  title             String           @db.VarChar(200)
+  slug              String           @db.VarChar(160)
+  description       Json
+  startAt           DateTime         @map("start_at") @db.Timestamptz(6)
+  endAt             DateTime?        @map("end_at") @db.Timestamptz(6)
+  /// IANA name, so a wall-clock time survives timezone changes.
+  timezone          String           @default("Asia/Kolkata") @db.VarChar(64)
+  venueName         String?          @map("venue_name") @db.VarChar(200)
+  venueAddress      String?          @map("venue_address")
+  venueMapUrl       String?          @map("venue_map_url")
+  isOnline          Boolean          @default(false) @map("is_online")
+  posterMediaId     String?          @map("poster_media_id") @db.Uuid
+  eventStatus       EventStatus      @default(SCHEDULED) @map("event_status")
+  isFeatured        Boolean          @default(false) @map("is_featured")
+  registrationMode  RegistrationMode @default(NONE) @map("registration_mode")
+  registrationUrl   String?          @map("registration_url")
+  capacity          Int?
+  status            ContentStatus    @default(DRAFT)
+  publishedAt       DateTime?        @map("published_at") @db.Timestamptz(6)
+  scheduledFor      DateTime?        @map("scheduled_for") @db.Timestamptz(6)
+  unpublishedAt     DateTime?        @map("unpublished_at") @db.Timestamptz(6)
+  currentRevisionId String?          @map("current_revision_id") @db.Uuid
+  version           Int              @default(1)
+  seoTitle          String?          @map("seo_title") @db.VarChar(70)
+  seoDescription    String?          @map("seo_description") @db.VarChar(180)
+  canonicalUrl      String?          @map("canonical_url")
+  ogImageId         String?          @map("og_image_id") @db.Uuid
+  noindex           Boolean          @default(false)
+  createdById       String?          @map("created_by") @db.Uuid
+  updatedById       String?          @map("updated_by") @db.Uuid
+  createdAt         DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt         DateTime?        @map("deleted_at") @db.Timestamptz(6)
+
+  poster     Media?    @relation("EventPoster", fields: [posterMediaId], references: [id], onDelete: SetNull)
+  enquiries  Enquiry[]
+
+  @@index([eventStatus, startAt])
+  @@index([status, startAt])
+  @@index([isFeatured])
+  @@map("events")
+}
+
+/* -------------------------------------------------------------------------- */
+/* Campaigns                                                                  */
+/* -------------------------------------------------------------------------- */
+
+model Campaign {
+  id                String         @id @db.Uuid
+  name              String         @db.VarChar(200)
+  slug              String         @db.VarChar(160)
+  purposeSummary    String         @map("purpose_summary") @db.VarChar(400)
+  story             Json
+  targetAmountMinor BigInt?        @map("target_amount_minor")
+  currency          String         @default("INR") @db.Char(3)
+  startDate         DateTime       @map("start_date") @db.Date
+  endDate           DateTime?      @map("end_date") @db.Date
+  progressSource    ProgressSource @default(VERIFIED_DONATIONS) @map("progress_source")
+  /// Only meaningful when progressSource = MANUAL; the CHECK constraint enforces
+  /// that a manual total cannot exist without a note explaining it.
+  manualRaisedMinor BigInt?        @map("manual_raised_minor")
+  manualRaisedNote  String?        @map("manual_raised_note")
+  useOfFunds        Json?          @map("use_of_funds")
+  faqs              Json?
+  coverMediaId      String?        @map("cover_media_id") @db.Uuid
+  isFeatured        Boolean        @default(false) @map("is_featured")
+  acceptsDonations  Boolean        @default(true) @map("accepts_donations")
+  status            ContentStatus  @default(DRAFT)
+  publishedAt       DateTime?      @map("published_at") @db.Timestamptz(6)
+  scheduledFor      DateTime?      @map("scheduled_for") @db.Timestamptz(6)
+  unpublishedAt     DateTime?      @map("unpublished_at") @db.Timestamptz(6)
+  currentRevisionId String?        @map("current_revision_id") @db.Uuid
+  version           Int            @default(1)
+  seoTitle          String?        @map("seo_title") @db.VarChar(70)
+  seoDescription    String?        @map("seo_description") @db.VarChar(180)
+  canonicalUrl      String?        @map("canonical_url")
+  ogImageId         String?        @map("og_image_id") @db.Uuid
+  noindex           Boolean        @default(false)
+  createdById       String?        @map("created_by") @db.Uuid
+  updatedById       String?        @map("updated_by") @db.Uuid
+  createdAt         DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt         DateTime?      @map("deleted_at") @db.Timestamptz(6)
+
+  cover   Media?           @relation("CampaignCover", fields: [coverMediaId], references: [id], onDelete: SetNull)
+  updates CampaignUpdate[]
+
+  @@index([status, publishedAt(sort: Desc)])
+  @@index([isFeatured])
+  @@map("campaigns")
+}
+
+model CampaignUpdate {
+  id          String        @id @db.Uuid
+  campaignId  String        @map("campaign_id") @db.Uuid
+  title       String        @db.VarChar(200)
+  body        Json
+  mediaId     String?       @map("media_id") @db.Uuid
+  status      ContentStatus @default(DRAFT)
+  publishedAt DateTime?     @map("published_at") @db.Timestamptz(6)
+  createdById String?       @map("created_by") @db.Uuid
+  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  media    Media?   @relation("CampaignUpdateMedia", fields: [mediaId], references: [id], onDelete: SetNull)
+
+  @@index([campaignId, publishedAt(sort: Desc)])
+  @@map("campaign_updates")
+}
+
+/* -------------------------------------------------------------------------- */
+/* Impact and testimonials                                                    */
+/* -------------------------------------------------------------------------- */
+
+/// A published figure must carry its evidence: the database refuses VERIFIED
+/// rows without a verifier, a timestamp and a methodology.
+model ImpactStat {
+  id                 String                   @id @db.Uuid
+  label              String                   @db.VarChar(120)
+  value              Decimal                  @db.Decimal(18, 2)
+  unit               String?                  @db.VarChar(40)
+  periodStart        DateTime?                @map("period_start") @db.Date
+  periodEnd          DateTime?                @map("period_end") @db.Date
+  periodLabel        String?                  @map("period_label") @db.VarChar(80)
+  methodology        String
+  sourceNote         String?                  @map("source_note") @db.VarChar(300)
+  displayOrder       Int                      @map("display_order")
+  isVisible          Boolean                  @default(true) @map("is_visible")
+  verificationStatus ImpactVerificationStatus @default(DRAFT) @map("verification_status")
+  verifiedById       String?                  @map("verified_by") @db.Uuid
+  verifiedAt         DateTime?                @map("verified_at") @db.Timestamptz(6)
+  createdAt          DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt          DateTime?                @map("deleted_at") @db.Timestamptz(6)
+
+  verifiedBy User? @relation("ImpactVerifier", fields: [verifiedById], references: [id], onDelete: SetNull)
+
+  @@index([verificationStatus, isVisible, displayOrder])
+  @@map("impact_stats")
+}
+
+/// A testimonial cannot be APPROVED without recorded consent evidence.
+model Testimonial {
+  id               String                    @id @db.Uuid
+  body             String
+  displayName      String                    @map("display_name") @db.VarChar(120)
+  location         String?                   @db.VarChar(120)
+  consentEvidence  String                    @map("consent_evidence") @db.VarChar(300)
+  consentDate      DateTime                  @map("consent_date") @db.Date
+  approvalStatus   TestimonialApprovalStatus @default(PENDING) @map("approval_status")
+  approvedById     String?                   @map("approved_by") @db.Uuid
+  approvedAt       DateTime?                 @map("approved_at") @db.Timestamptz(6)
+  mediaId          String?                   @map("media_id") @db.Uuid
+  isVisible        Boolean                   @default(false) @map("is_visible")
+  displayOrder     Int                       @default(0) @map("display_order")
+  createdAt        DateTime                  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime                  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt        DateTime?                 @map("deleted_at") @db.Timestamptz(6)
+
+  approvedBy User?  @relation("TestimonialApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+  media      Media? @relation("TestimonialMedia", fields: [mediaId], references: [id], onDelete: SetNull)
+
+  @@index([approvalStatus, isVisible, displayOrder])
+  @@map("testimonials")
+}
+
+/* -------------------------------------------------------------------------- */
+/* Enquiries                                                                  */
+/* -------------------------------------------------------------------------- */
+
+/// An inbound contact/volunteer enquiry. No public write endpoint exists in
+/// Phase 6 — this table is created now so Phase 7 can accept submissions without
+/// another migration.
+model Enquiry {
+  id               String        @id @db.Uuid
+  reference        String        @unique @db.VarChar(24)
+  type             EnquiryType
+  name             String        @db.VarChar(120)
+  /// Stored lowercase; a CHECK enforces the invariant (no citext extension).
+  email            String        @db.VarChar(254)
+  phone            String?       @db.VarChar(20)
+  subject          String?       @db.VarChar(200)
+  message          String
+  eventId          String?       @map("event_id") @db.Uuid
+  consentGivenAt   DateTime      @map("consent_given_at") @db.Timestamptz(6)
+  consentVersion   String        @map("consent_version") @db.VarChar(20)
+  status           EnquiryStatus @default(NEW)
+  assignedToId     String?       @map("assigned_to") @db.Uuid
+  sourcePath       String?       @map("source_path") @db.VarChar(300)
+  ipHash           String?       @map("ip_hash") @db.Char(64)
+  userAgent        String?       @map("user_agent")
+  spamScore        Decimal?      @map("spam_score") @db.Decimal(4, 2)
+  retentionDeleteAt DateTime?    @map("retention_delete_at") @db.Timestamptz(6)
+  createdAt        DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  event      Event? @relation(fields: [eventId], references: [id], onDelete: SetNull)
+  assignedTo User?  @relation("EnquiryAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt(sort: Desc)])
+  @@index([type, status])
+  @@index([assignedToId, status])
+  @@map("enquiries")
+}

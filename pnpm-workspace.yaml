@@ -1,0 +1,19 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+
+# pnpm 11 refuses to run dependency install scripts unless each package is
+# explicitly approved (the legacy `pnpm.onlyBuiltDependencies` field in
+# package.json is no longer read). These four need their scripts to work:
+#
+#   prisma / @prisma/engines  - fetch the schema engine used by migrations
+#   esbuild                   - install the platform binary used by Vitest
+#   @embedded-postgres/...    - unpack the local PostgreSQL server binaries
+#                               (only used by the no-Docker development path)
+#
+# Approve a new entry only after reviewing what the script does.
+allowBuilds:
+  '@embedded-postgres/windows-x64': true
+  '@prisma/engines': true
+  esbuild: true
+  prisma: true

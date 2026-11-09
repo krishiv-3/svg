@@ -1,0 +1,40 @@
+# Local development dependencies for the Gaushala website.
+#
+# Usage:
+#   docker compose -f infra/docker/docker-compose.dev.yml up -d
+#   pnpm db:bootstrap
+#   pnpm db:migrate:all
+#   pnpm db:seed
+#
+# This file intentionally contains only PostgreSQL for Phase 2. Redis, object
+# storage and a mail catcher are added in the phases that need them (6, 7, 9) so
+# the local stack stays as small as the phase that runs it.
+#
+# The container creates only the superuser. Application roles and databases are
+# created by scripts/db-bootstrap.mjs so the Docker path and the no-Docker path
+# behave identically.
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: gaushala-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+      # Deterministic collation for reproducible ordering in tests.
+      POSTGRES_INITDB_ARGS: '--locale=C --encoding=UTF8'
+    ports:
+      - '5432:5432'
+    volumes:
+      - gaushala-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d postgres']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  gaushala-pgdata:
+    name: gaushala-pgdata

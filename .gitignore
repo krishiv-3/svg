@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+.pnpm-cache/
+.pnpm-state/
+
+# Build output
+dist/
+.next/
+out/
+*.tsbuildinfo
+.turbo/
+
+# Generated Prisma client (regenerated with `pnpm --filter @gaushala/api generate`)
+apps/api/src/generated/
+
+# Environment files — never commit real credentials
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Local database and tooling state
+.local/
+*.log
+coverage/
+playwright-report/
+test-results/
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# Agent / sandbox artefacts
+.acl-recovery/

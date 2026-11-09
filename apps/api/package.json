@@ -1,0 +1,45 @@
+{
+  "name": "@gaushala/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Express API — all business logic and authorisation for the Gaushala website",
+  "main": "dist/index.js",
+  "scripts": {
+    "generate": "prisma generate",
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src prisma tests",
+    "test:unit": "vitest run --config vitest.config.ts",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "db:migrate": "prisma migrate dev",
+    "db:migrate:deploy": "prisma migrate deploy",
+    "db:seed": "prisma db seed",
+    "db:reset": "prisma migrate reset --force",
+    "db:status": "prisma migrate status",
+    "clean": "node ../../scripts/clean.mjs apps/api"
+  },
+  "dependencies": {
+    "@gaushala/shared": "workspace:*",
+    "@prisma/adapter-pg": "7.10.1",
+    "@prisma/client": "7.10.1",
+    "dotenv": "18.0.9",
+    "express": "5.3.0",
+    "pg": "8.23.1",
+    "pino": "10.4.0",
+    "pino-http": "11.0.0",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/express": "5.0.6",
+    "@types/node": "24.10.1",
+    "@types/supertest": "6.0.3",
+    "pino-pretty": "13.2.0",
+    "prisma": "7.10.1",
+    "supertest": "7.3.1",
+    "tsx": "4.23.15",
+    "vitest": "5.1.0"
+  }
+}
