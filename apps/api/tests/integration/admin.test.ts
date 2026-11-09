@@ -35,6 +35,25 @@ interface Actor {
 const actors: Record<string, Actor> = {};
 const created: { users: string[]; campaigns: string[] } = { users: [], campaigns: [] };
 
+/**
+ * Resolve a seeded role, failing with an actionable message.
+ *
+ * A missing catalogue is a fixture problem, not a product bug; Prisma's
+ * "record not found" would send the reader hunting in the wrong place.
+ */
+async function requireRoleId(key: string): Promise<string> {
+  const role = await owner.role.findUnique({ where: { key }, select: { id: true } });
+
+  if (role === null) {
+    throw new Error(
+      `Test fixture error: role "${key}" is missing from the test database. ` +
+        'Seed reference data for the test database (see apps/api/tests/setup.integration.ts).',
+    );
+  }
+
+  return role.id;
+}
+
 async function makeUser(key: string, roleKey: string | null): Promise<void> {
   const email = `${PREFIX}-${key}@example.test`;
   const passwordHash = await hashPassword(PASSWORD);
@@ -57,8 +76,9 @@ async function makeUser(key: string, roleKey: string | null): Promise<void> {
   created.users.push(user.id);
 
   if (roleKey !== null) {
-    const role = await owner.role.findUniqueOrThrow({ where: { key: roleKey } });
-    await owner.userRole.create({ data: { userId: user.id, roleId: role.id } });
+    await owner.userRole.create({
+      data: { userId: user.id, roleId: await requireRoleId(roleKey) },
+    });
   }
 
   actors[key] = { email, id: user.id, cookie: '', csrf: '' };
@@ -1180,5 +1200,49 @@ describe('campaign detail payload', () => {
     expect(detail.status).toBe(200);
     expect(detail.body.data.manualRaisedNote).toBe('Recorded in the ledger');
     expect(typeof detail.body.data.manualRaisedMinor).toBe('number');
+  });
+});
+
+describe('role fixtures', () => {
+  const EXPECTED_ROLES = ['super_admin', 'content_editor', 'donation_manager', 'volunteer_manager'];
+
+  it('has the full role catalogue in the test database', async () => {
+    const roles = await owner.role.findMany({
+      where: { key: { in: EXPECTED_ROLES } },
+      select: { key: true, permissions: { select: { permissionId: true } } },
+    });
+
+    expect(roles.map((role) => role.key).sort()).toEqual([...EXPECTED_ROLES].sort());
+
+    for (const role of roles) {
+      // Every role carries grants; an empty catalogue would silently deny
+      // everything and make RBAC tests pass for the wrong reason.
+      expect(role.permissions.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('builds an actor for every supported role', async () => {
+    for (const [actor, roleKey] of [
+      ['super', 'super_admin'],
+      ['editor', 'content_editor'],
+      ['donation', 'donation_manager'],
+      ['volunteer', 'volunteer_manager'],
+    ] as const) {
+      const user = actors[actor];
+      expect(user).toBeDefined();
+
+      if (user === undefined) continue;
+
+      const links = await owner.userRole.findMany({
+        where: { userId: user.id },
+        select: { role: { select: { key: true } } },
+      });
+
+      expect(links.map((link) => link.role.key)).toContain(roleKey);
+    }
+  });
+
+  it('reports a missing role as a fixture error, not a Prisma exception', async () => {
+    await expect(requireRoleId('does_not_exist')).rejects.toThrow(/Test fixture error/);
   });
 });

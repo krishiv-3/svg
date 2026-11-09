@@ -84,6 +84,14 @@ jobs:
       - name: Seed reference data
         run: pnpm db:seed
 
+      - name: Seed test database reference data
+        run: pnpm db:seed
+        env:
+          # The integration tests run against gaushala_test, so that database
+          # needs the same role and permission catalogue. `db:seed` is idempotent.
+          MIGRATE_DATABASE_URL: postgresql://gaushala_owner:gaushala_owner_dev@localhost:5432/gaushala_test
+          DATABASE_URL: postgresql://gaushala_app:gaushala_app_dev@localhost:5432/gaushala_test
+
       - name: Lint
         run: pnpm lint
 
