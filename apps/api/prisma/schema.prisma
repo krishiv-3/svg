@@ -69,6 +69,8 @@ model User {
   verifiedImpactStats  ImpactStat[]  @relation("ImpactVerifier")
   approvedTestimonials Testimonial[] @relation("TestimonialApprover")
   assignedEnquiries    Enquiry[]     @relation("EnquiryAssignee")
+  sessions             Session[]     @relation("UserSessions")
+  auditLogs            AuditLog[]    @relation("UserAuditLogs")
 
   @@index([status])
   @@index([deletedAt])
@@ -779,4 +781,64 @@ model Enquiry {
   @@index([type, status])
   @@index([assignedToId, status])
   @@map("enquiries")
+}
+
+/* ========================================================================== */
+/* Phase 7 — admin authentication, audit and rate limiting                    */
+/* ========================================================================== */
+
+/// A server-side session. Only the SHA-256 hash of the opaque token is stored,
+/// so a database leak cannot be replayed as a login.
+model Session {
+  id             String    @id @db.Uuid
+  userId         String    @map("user_id") @db.Uuid
+  tokenHash      String    @unique @map("token_hash") @db.Char(64)
+  csrfTokenHash  String    @map("csrf_token_hash") @db.Char(64)
+  ipHash         String?   @map("ip_hash") @db.Char(64)
+  userAgent      String?   @map("user_agent")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  lastUsedAt     DateTime  @default(now()) @map("last_used_at") @db.Timestamptz(6)
+  expiresAt      DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt      DateTime? @map("revoked_at") @db.Timestamptz(6)
+  revokedReason  String?   @map("revoked_reason") @db.VarChar(80)
+
+  user User @relation("UserSessions", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+/// Append-only record of administrative actions. Never deleted by the app.
+model AuditLog {
+  id         String   @id @db.Uuid
+  actorId    String?  @map("actor_id") @db.Uuid
+  action     String   @db.VarChar(80)
+  entityType String   @map("entity_type") @db.VarChar(40)
+  entityId   String?  @map("entity_id") @db.Uuid
+  before     Json?
+  after      Json?
+  requestId  String?  @map("request_id") @db.VarChar(128)
+  ipHash     String?  @map("ip_hash") @db.Char(64)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  actor User? @relation("UserAuditLogs", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([entityType, entityId, createdAt(sort: Desc)])
+  @@index([actorId, createdAt(sort: Desc)])
+  @@index([action, createdAt(sort: Desc)])
+  @@map("audit_logs")
+}
+
+/// Login attempts, hashed, used only for rate limiting and incident response.
+model LoginAttempt {
+  id        String   @id @db.Uuid
+  emailHash String   @map("email_hash") @db.Char(64)
+  ipHash    String?  @map("ip_hash") @db.Char(64)
+  success   Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([emailHash, createdAt(sort: Desc)])
+  @@index([ipHash, createdAt(sort: Desc)])
+  @@map("login_attempts")
 }

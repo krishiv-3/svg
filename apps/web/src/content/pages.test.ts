@@ -2,20 +2,39 @@ import { SITE_NAME } from '@gaushala/shared';
 import { describe, expect, it } from 'vitest';
 
 import {
-  getAboutPage,
-  getCampaign,
-  getCampaignsPage,
-  getCampaignSlugs,
-  getContactPage,
-  getEvent,
-  getEventsPage,
-  getEventSlugs,
-  getGalleryPage,
-  getNewsArticle,
-  getNewsPage,
-  getNewsSlugs,
-  getOurWorkPage,
-} from './index';
+  demoAboutPage,
+  demoCampaignsPage,
+  demoContactPage,
+  demoEventsPage,
+  demoGalleryPage,
+  demoNewsPage,
+  demoOurWorkPage,
+  findCampaign,
+  findEvent,
+  findNews,
+} from './pages.demo';
+
+/**
+ * Phase 5 content contracts, asserted against the demonstration dataset.
+ *
+ * The loaders themselves live in `./index` and are `server-only` (they fetch the
+ * API), so these tests exercise the dataset directly.
+ */
+
+const getAboutPage = async () => demoAboutPage;
+const getOurWorkPage = async () => demoOurWorkPage;
+const getCampaignsPage = async () => demoCampaignsPage;
+const getEventsPage = async () => demoEventsPage;
+const getNewsPage = async () => demoNewsPage;
+const getGalleryPage = async () => demoGalleryPage;
+const getContactPage = async () => demoContactPage;
+const getCampaign = async (slug: string) => findCampaign(slug);
+const getEvent = async (slug: string) => findEvent(slug);
+const getNewsArticle = async (slug: string) => findNews(slug);
+const getCampaignSlugs = async () => demoCampaignsPage.items.map((item) => item.slug);
+const getEventSlugs = async () =>
+  [...demoEventsPage.upcoming, ...demoEventsPage.past].map((e) => e.slug);
+const getNewsSlugs = async () => demoNewsPage.items.map((item) => item.slug);
 
 /**
  * Phase 5 content loaders.

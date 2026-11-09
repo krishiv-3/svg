@@ -67,7 +67,6 @@ export default async function EventsPage() {
                       venue={event.venue}
                       status={event.status}
                       link={{ href: `/events/${event.slug}`, label: 'Event details' }}
-                      demo
                     />
                   </li>
                 ))}
@@ -94,7 +93,6 @@ export default async function EventsPage() {
                       venue={event.venue}
                       status={event.status}
                       link={{ href: `/events/${event.slug}`, label: 'Event details' }}
-                      demo
                     />
                   </li>
                 ))}

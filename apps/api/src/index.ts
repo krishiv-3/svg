@@ -8,6 +8,7 @@ import { createApp } from './app.js';
 import { EnvValidationError, getEnv } from './core/config/env.js';
 import { createPrismaClient } from './core/db/prisma.js';
 import { createLogger } from './core/logging/logger.js';
+import { startScheduler } from './modules/admin/publishing.js';
 
 /**
  * API entry point.
@@ -29,6 +30,10 @@ async function main(): Promise<void> {
   const prisma = createPrismaClient(config.databaseUrl);
   const app = createApp({ config, logger, prisma });
   const server = createServer(app);
+
+  // Publish scheduled campaigns. A plain interval is enough for one API
+  // instance; the publisher itself is idempotent and transactional.
+  const stopScheduler = startScheduler(prisma, logger);
 
   server.listen(config.port, config.host, () => {
     logger.info(
@@ -54,6 +59,8 @@ async function main(): Promise<void> {
       process.exit(1);
     }, config.shutdownTimeoutMs);
     forceExit.unref();
+
+    stopScheduler();
 
     server.close(() => {
       void prisma

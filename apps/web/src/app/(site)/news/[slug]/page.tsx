@@ -118,7 +118,6 @@ export default async function NewsArticlePage({ params }: ArticlePageProps) {
                     dateTime={item.dateTime}
                     imageLabel={item.image.label}
                     link={{ href: `/news/${item.slug}`, label: 'Read article' }}
-                    demo
                   />
                 </li>
               ))}

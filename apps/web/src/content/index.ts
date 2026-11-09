@@ -16,7 +16,12 @@ import {
   type PageDto,
 } from '@gaushala/shared';
 
-import { getOptionalPublicResource, getPublicCollection, getPublicResource, publicQuery } from './api/client';
+import {
+  getOptionalPublicResource,
+  getPublicCollection,
+  getPublicResource,
+  publicQuery,
+} from './api/client';
 import {
   campaignStatus,
   mapActivity,
@@ -75,20 +80,15 @@ export type * from './library';
  * changed, which is why no page component had to be rewritten.
  */
 
-function useDemoContent(): boolean {
-  const requested = process.env.CONTENT_SOURCE;
+import { resolveContentSource } from '@/lib/content-source';
 
-  if (requested !== 'demo') {
-    return false;
-  }
-
-  if (process.env.NODE_ENV === 'production') {
-    throw new Error(
-      'CONTENT_SOURCE=demo is not permitted in production: public pages must read the database.',
-    );
-  }
-
-  return true;
+function isDemoContentEnabled(): boolean {
+  return (
+    resolveContentSource({
+      requested: process.env.CONTENT_SOURCE,
+      nodeEnv: process.env.NODE_ENV,
+    }) === 'demo'
+  );
 }
 
 const API = '/api/v1/public';
@@ -130,9 +130,7 @@ async function loadHomepage(): Promise<HomepageContent> {
   const hero = blockOf(sections, 'hero');
 
   if (hero === undefined) {
-    throw new Error(
-      'Homepage has no hero section. Publish one before serving the public site.',
-    );
+    throw new Error('Homepage has no hero section. Publish one before serving the public site.');
   }
 
   const about = blockOf(sections, 'about_preview');
@@ -241,7 +239,9 @@ async function loadHomepage(): Promise<HomepageContent> {
       eyebrow: "What's on",
       heading: sectionHeading(eventsSection, 'Come and see the work'),
       description: '',
-      items: ((eventsSection?.events as never[] | undefined) ?? []).map((row) => mapEvent(row as never)),
+      items: ((eventsSection?.events as never[] | undefined) ?? []).map((row) =>
+        mapEvent(row as never),
+      ),
       link: { label: 'All events', href: '/events' },
     },
     gallery: {
@@ -277,7 +277,7 @@ async function loadHomepage(): Promise<HomepageContent> {
 }
 
 export async function getHomepageContent(): Promise<HomepageContent> {
-  return useDemoContent() ? demoHomepageContent : loadHomepage();
+  return isDemoContentEnabled() ? demoHomepageContent : loadHomepage();
 }
 
 /* -------------------------------------------------------------------------- */
@@ -297,7 +297,7 @@ async function fetchOptionalPage(slug: string): Promise<PageDto | null> {
 }
 
 export async function getAboutPage(): Promise<AboutPageContent> {
-  if (useDemoContent()) return demoAboutPage;
+  if (isDemoContentEnabled()) return demoAboutPage;
 
   const row = await fetchOptionalPage('about');
 
@@ -318,7 +318,7 @@ export async function getAboutPage(): Promise<AboutPageContent> {
 }
 
 export async function getContactPage(): Promise<ContactPageContent> {
-  if (useDemoContent()) return demoContactPage;
+  if (isDemoContentEnabled()) return demoContactPage;
 
   const row = await fetchOptionalPage('contact');
 
@@ -339,7 +339,7 @@ export async function getContactPage(): Promise<ContactPageContent> {
 }
 
 export async function getOurWorkPage(): Promise<OurWorkPageContent> {
-  if (useDemoContent()) return demoOurWorkPage;
+  if (isDemoContentEnabled()) return demoOurWorkPage;
 
   const activities = await getPublicCollection(
     `${API}/activities${publicQuery({ limit: 12 })}`,
@@ -361,7 +361,7 @@ export async function getOurWorkPage(): Promise<OurWorkPageContent> {
 /* -------------------------------------------------------------------------- */
 
 export async function getCampaignsPage(): Promise<CampaignsPageContent> {
-  if (useDemoContent()) return demoCampaignsPage;
+  if (isDemoContentEnabled()) return demoCampaignsPage;
 
   const page = await getPublicCollection(
     `${API}/campaigns${publicQuery({ limit: 24 })}`,
@@ -379,7 +379,7 @@ export async function getCampaignsPage(): Promise<CampaignsPageContent> {
 }
 
 export async function getCampaign(slug: string): Promise<CampaignRecord | undefined> {
-  if (useDemoContent()) return findCampaign(slug);
+  if (isDemoContentEnabled()) return findCampaign(slug);
 
   try {
     const row = await getPublicResource(
@@ -408,12 +408,16 @@ export async function getCampaignSlugs(): Promise<readonly string[]> {
 /* -------------------------------------------------------------------------- */
 
 export async function getEventsPage(): Promise<EventsPageContent> {
-  if (useDemoContent()) return demoEventsPage;
+  if (isDemoContentEnabled()) return demoEventsPage;
 
   const [upcoming, past] = await Promise.all([
-    getPublicCollection(`${API}/events${publicQuery({ when: 'upcoming', limit: 24 })}`, eventSchema, {
-      revalidate: 60,
-    }),
+    getPublicCollection(
+      `${API}/events${publicQuery({ when: 'upcoming', limit: 24 })}`,
+      eventSchema,
+      {
+        revalidate: 60,
+      },
+    ),
     getPublicCollection(`${API}/events${publicQuery({ when: 'past', limit: 24 })}`, eventSchema, {
       revalidate: 60,
     }),
@@ -430,7 +434,7 @@ export async function getEventsPage(): Promise<EventsPageContent> {
 }
 
 export async function getEvent(slug: string): Promise<EventRecord | undefined> {
-  if (useDemoContent()) return findEvent(slug);
+  if (isDemoContentEnabled()) return findEvent(slug);
 
   try {
     const row = await getPublicResource(`${API}/events/${encodeURIComponent(slug)}`, eventSchema, {
@@ -446,7 +450,10 @@ export async function getEvent(slug: string): Promise<EventRecord | undefined> {
 
 export async function getEventSlugs(): Promise<readonly string[]> {
   const [upcoming, past] = await Promise.all([
-    getPublicCollection(`${API}/events${publicQuery({ when: 'upcoming', limit: 48 })}`, eventSchema),
+    getPublicCollection(
+      `${API}/events${publicQuery({ when: 'upcoming', limit: 48 })}`,
+      eventSchema,
+    ),
     getPublicCollection(`${API}/events${publicQuery({ when: 'past', limit: 48 })}`, eventSchema),
   ]);
 
@@ -458,7 +465,7 @@ export async function getEventSlugs(): Promise<readonly string[]> {
 /* -------------------------------------------------------------------------- */
 
 export async function getNewsPage(category?: string): Promise<NewsPageContent> {
-  if (useDemoContent()) return demoNewsPage;
+  if (isDemoContentEnabled()) return demoNewsPage;
 
   const [items, categories] = await Promise.all([
     getPublicCollection(`${API}/news${publicQuery({ limit: 24, category })}`, newsSummarySchema, {
@@ -478,7 +485,7 @@ export async function getNewsPage(category?: string): Promise<NewsPageContent> {
 }
 
 export async function getNewsArticle(slug: string): Promise<NewsRecord | undefined> {
-  if (useDemoContent()) return findNews(slug);
+  if (isDemoContentEnabled()) return findNews(slug);
 
   try {
     const row = await getPublicResource(
@@ -507,12 +514,16 @@ export async function getNewsSlugs(): Promise<readonly string[]> {
 /* -------------------------------------------------------------------------- */
 
 export async function getGalleryPage(category?: string): Promise<GalleryPageContent> {
-  if (useDemoContent()) return demoGalleryPage;
+  if (isDemoContentEnabled()) return demoGalleryPage;
 
   const [items, albums] = await Promise.all([
-    getPublicCollection(`${API}/gallery${publicQuery({ limit: 24, category })}`, galleryItemSchema, {
-      revalidate: 60,
-    }),
+    getPublicCollection(
+      `${API}/gallery${publicQuery({ limit: 24, category })}`,
+      galleryItemSchema,
+      {
+        revalidate: 60,
+      },
+    ),
     getPublicResource(`${API}/gallery/albums`, galleryAlbumSchema.array(), { revalidate: 300 }),
   ]);
 

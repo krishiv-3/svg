@@ -37,7 +37,6 @@ export function NewsSection({ news }: { news: HomepageNews }) {
               dateTime={article.dateTime}
               imageLabel="Article cover photograph"
               link={{ href: '/news', label: 'Read article' }}
-              demo
             />
           ))}
         </div>

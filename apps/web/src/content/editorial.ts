@@ -107,8 +107,7 @@ export const OUR_WORK_PAGE = {
   hero: {
     eyebrow: 'Our work',
     heading: 'The work is the routine.',
-    description:
-      'Four areas of work, repeated daily: nourishment, health, shelter and community.',
+    description: 'Four areas of work, repeated daily: nourishment, health, shelter and community.',
   },
   intro: {
     heading: 'How the work is organised',

@@ -88,7 +88,6 @@ export default async function NewsPage({ searchParams }: NewsPageProps) {
                   dateTime={article.dateTime}
                   imageLabel={article.image.label}
                   link={{ href: `/news/${article.slug}`, label: 'Read article' }}
-                  demo
                 />
               </li>
             ))}

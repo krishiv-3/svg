@@ -70,7 +70,11 @@ async function main(): Promise<void> {
   });
 
   const mediaIds: string[] = [];
-  for (const [index, caption] of ['Morning feeding', 'Shelter courtyard', 'Health check'].entries()) {
+  for (const [index, caption] of [
+    'Morning feeding',
+    'Shelter courtyard',
+    'Health check',
+  ].entries()) {
     const row = await prisma.media.upsert({
       where: { storageKey: `preview/${String(index)}.jpg` },
       update: {},
@@ -81,7 +85,9 @@ async function main(): Promise<void> {
         originalFilename: `preview-${String(index)}.jpg`,
         mimeType: 'image/jpeg',
         sizeBytes: 120_000n,
-        checksumSha256: String(index + 1).repeat(64).slice(0, 64),
+        checksumSha256: String(index + 1)
+          .repeat(64)
+          .slice(0, 64),
         kind: 'IMAGE',
         status: 'READY',
         isPublic: true,
@@ -149,8 +155,18 @@ async function main(): Promise<void> {
 
   const events = [
     { slug: 'preview-open-day', title: 'Community open day', start: days(12), status: 'SCHEDULED' },
-    { slug: 'preview-volunteer-morning', title: 'Volunteer morning', start: days(20), status: 'SCHEDULED' },
-    { slug: 'preview-workshop', title: 'Winter care workshop', start: days(-18), status: 'COMPLETED' },
+    {
+      slug: 'preview-volunteer-morning',
+      title: 'Volunteer morning',
+      start: days(20),
+      status: 'SCHEDULED',
+    },
+    {
+      slug: 'preview-workshop',
+      title: 'Winter care workshop',
+      start: days(-18),
+      status: 'COMPLETED',
+    },
   ];
 
   for (const event of events) {
@@ -216,10 +232,26 @@ async function main(): Promise<void> {
   }
 
   const activities = [
-    { slug: 'preview-nourishment', title: 'Daily Nourishment', summary: 'Fresh fodder and clean water every day.' },
-    { slug: 'preview-care', title: 'Care and Wellbeing', summary: 'Daily checks and a quiet place to recover.' },
-    { slug: 'preview-shelter', title: 'Safe Shelter', summary: 'Shade, ventilation and dry flooring.' },
-    { slug: 'preview-community', title: 'Community Support', summary: 'Visits, volunteering and learning.' },
+    {
+      slug: 'preview-nourishment',
+      title: 'Daily Nourishment',
+      summary: 'Fresh fodder and clean water every day.',
+    },
+    {
+      slug: 'preview-care',
+      title: 'Care and Wellbeing',
+      summary: 'Daily checks and a quiet place to recover.',
+    },
+    {
+      slug: 'preview-shelter',
+      title: 'Safe Shelter',
+      summary: 'Shade, ventilation and dry flooring.',
+    },
+    {
+      slug: 'preview-community',
+      title: 'Community Support',
+      summary: 'Visits, volunteering and learning.',
+    },
   ];
 
   for (const activity of activities) {
@@ -267,7 +299,9 @@ async function main(): Promise<void> {
     });
   }
 
-  const testimonial = await prisma.testimonial.findFirst({ where: { displayName: 'Preview supporter' } });
+  const testimonial = await prisma.testimonial.findFirst({
+    where: { displayName: 'Preview supporter' },
+  });
   if (testimonial === null) {
     await prisma.testimonial.create({
       data: {

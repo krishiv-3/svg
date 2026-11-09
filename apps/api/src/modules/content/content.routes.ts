@@ -27,10 +27,13 @@ function okCollection<T>(
   page: { items: readonly T[]; nextCursor: string | null },
   limit: number,
 ): void {
-  response.setHeader('Cache-Control', PUBLIC_CACHE).status(200).json({
-    data: page.items,
-    meta: { pagination: { limit, nextCursor: page.nextCursor } },
-  });
+  response
+    .setHeader('Cache-Control', PUBLIC_CACHE)
+    .status(200)
+    .json({
+      data: page.items,
+      meta: { pagination: { limit, nextCursor: page.nextCursor } },
+    });
 }
 
 /** Convert the service DTO's flat amounts into the documented money object. */
@@ -103,15 +106,18 @@ export function createPublicContentRouter(dependencies: PublicContentRouterDepen
   router.get('/campaigns', async (request, response) => {
     const page = await content.campaigns.list(request.query);
 
-    response.setHeader('Cache-Control', PUBLIC_CACHE).status(200).json({
-      data: page.items.map(serialiseCampaign),
-      meta: {
-        pagination: {
-          limit: Number(request.query.limit ?? 12),
-          nextCursor: page.nextCursor,
+    response
+      .setHeader('Cache-Control', PUBLIC_CACHE)
+      .status(200)
+      .json({
+        data: page.items.map(serialiseCampaign),
+        meta: {
+          pagination: {
+            limit: Number(request.query.limit ?? 12),
+            nextCursor: page.nextCursor,
+          },
         },
-      },
-    });
+      });
   });
 
   router.get('/campaigns/:slug', async (request, response) => {
@@ -157,16 +163,19 @@ export function createPublicContentRouter(dependencies: PublicContentRouterDepen
   router.get('/gallery', async (request, response) => {
     const result = await content.gallery.list(request.query);
 
-    response.setHeader('Cache-Control', PUBLIC_CACHE).status(200).json({
-      data: result.items.items,
-      meta: {
-        pagination: {
-          limit: Number(request.query.limit ?? 12),
-          nextCursor: result.items.nextCursor,
+    response
+      .setHeader('Cache-Control', PUBLIC_CACHE)
+      .status(200)
+      .json({
+        data: result.items.items,
+        meta: {
+          pagination: {
+            limit: Number(request.query.limit ?? 12),
+            nextCursor: result.items.nextCursor,
+          },
+          albums: result.albums,
         },
-        albums: result.albums,
-      },
-    });
+      });
   });
 
   /* -------------------------------------------------- impact + testimonials */

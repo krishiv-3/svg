@@ -38,7 +38,6 @@ export function CampaignsSection({ campaigns }: { campaigns: HomepageCampaigns }
               goalMinor={campaign.goalMinor}
               status={campaign.status}
               imageLabel={campaign.imageLabel}
-              demo
               link={{ href: '/campaigns', label: 'Support this campaign' }}
             />
           ))}

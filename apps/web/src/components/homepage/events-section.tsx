@@ -38,7 +38,6 @@ export function EventsSection({ events }: { events: HomepageEvents }) {
               venue={event.venue}
               status={event.status}
               link={{ href: '/events', label: 'Event details' }}
-              demo
             />
           ))}
         </div>

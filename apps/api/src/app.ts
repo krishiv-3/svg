@@ -76,7 +76,7 @@ export function createApp(dependencies: AppDependencies): Express {
 
   // One content module (and therefore one Prisma client) for the whole process.
   const content = createContentModule(prisma);
-  app.use('/api/v1', createV1Router({ config, content }));
+  app.use('/api/v1', createV1Router({ config, content, prisma, logger }));
 
   app.use(createNotFoundHandler());
   app.use(createErrorHandler({ logger, isProduction: config.isProduction }));

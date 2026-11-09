@@ -30,7 +30,6 @@ export function TestimonialsSection({ testimonials }: { testimonials: HomepageTe
               quote={testimonial.quote}
               name={testimonial.name}
               {...(testimonial.context === undefined ? {} : { context: testimonial.context })}
-              demo
             />
           ))}
         </div>

@@ -13,6 +13,7 @@ packages:
 #
 # Approve a new entry only after reviewing what the script does.
 allowBuilds:
+  '@embedded-postgres/linux-x64': true
   '@embedded-postgres/windows-x64': true
   '@prisma/engines': true
   esbuild: true

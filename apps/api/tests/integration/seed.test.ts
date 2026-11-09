@@ -17,7 +17,11 @@ describe('reference-data seed', () => {
     const first = await seedReferenceData(prisma);
     const second = await seedReferenceData(prisma);
 
-    expect(second).toEqual(first);
+    // `homepage` reports whether the singleton row had to be created, so the two
+    // runs legitimately differ on that field only.
+    expect({ ...second, homepage: 'same' }).toEqual({ ...first, homepage: 'same' });
+    expect(first.homepage).toBe('created');
+    expect(second.homepage).toBe('existing');
     expect(second.permissions).toBe(PERMISSIONS.length);
     expect(second.roles).toBe(ROLE_TEMPLATES.length);
   });

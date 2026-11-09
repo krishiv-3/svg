@@ -58,7 +58,6 @@ export default async function CampaignsPage() {
                   status={campaign.status}
                   imageLabel={campaign.image.label}
                   link={{ href: `/campaigns/${campaign.slug}`, label: 'Campaign details' }}
-                  demo
                 />
               </li>
             ))}
