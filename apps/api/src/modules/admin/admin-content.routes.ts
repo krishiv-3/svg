@@ -64,7 +64,12 @@ const eventSchema = z.object({
   endAt: z.iso.datetime().nullable(),
   venueName: z.string().max(200).nullable(),
   venueAddress: z.string().max(500).nullable(),
-  registrationUrl: z.url().max(500).nullable(),
+  // Optional, but when present it must be a real http(s) URL. `z.url()` alone
+  // accepts any scheme, including `javascript:`.
+  registrationUrl: z
+    .url({ protocol: /^https?$/ })
+    .max(500)
+    .nullable(),
   isFeatured: z.boolean(),
   version: z.number().int().min(1),
   ...seoSchema,

@@ -1,4 +1,4 @@
-import request from 'supertest';
+﻿import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { uuidv7 } from '@gaushala/shared';
@@ -366,16 +366,18 @@ describe('campaign lifecycle', () => {
     expect(revisions.body.data[0].snapshot.slug).toBe(slug);
   });
 
-  it('supersedes the previous revision on republish', async () => {
+  it('keeps a single revision when republishing unchanged content', async () => {
     await authed('super', 'post', `/campaigns/${id}/status`, { action: 'unpublish' });
     await authed('super', 'post', `/campaigns/${id}/status`, { action: 'publish' });
 
     const revisions = await authed('super', 'get', `/campaigns/${id}/revisions`);
     const statuses = revisions.body.data.map((row: { status: string }) => row.status);
 
+    // Identical content is not a new revision: the existing PUBLISHED snapshot
+    // stays live and nothing is superseded (see the de-duplication suite).
     expect(statuses.filter((status: string) => status === 'PUBLISHED')).toHaveLength(1);
-    expect(statuses).toContain('SUPERSEDED');
-    expect(revisions.body.data).toHaveLength(2);
+    expect(statuses).not.toContain('SUPERSEDED');
+    expect(revisions.body.data).toHaveLength(1);
   });
 
   it('unpublishes and disappears from the public API', async () => {
@@ -918,5 +920,246 @@ describe('previews for content modules', () => {
     expect((await request(app).get(`/api/v1/public/activities/${slug}`)).status).toBe(404);
 
     await owner.activity.deleteMany({ where: { id } });
+  });
+});
+
+describe('revision snapshot de-duplication', () => {
+  const run = String(Date.now());
+  let id = '';
+  const slug = `adm-dedup-${run}`;
+
+  const payload = (over: Record<string, unknown> = {}) => ({
+    ...campaignPayload(slug),
+    manualRaisedNote: 'Ledger',
+    ...over,
+  });
+
+  beforeAll(async () => {
+    await login('super');
+    const saved = await authed('super', 'post', '/campaigns', payload());
+    id = saved.body.data.id;
+    created.campaigns.push(id);
+  });
+
+  afterAll(async () => {
+    await owner.revision.deleteMany({ where: { entityId: id } });
+  });
+
+  it('writes one snapshot on first publish', async () => {
+    const published = await authed('super', 'post', `/campaigns/${id}/status`, {
+      action: 'publish',
+    });
+    expect(published.status).toBe(200);
+
+    const revisions = await owner.revision.findMany({ where: { entityId: id } });
+    expect(revisions).toHaveLength(1);
+    expect(revisions[0]?.status).toBe('PUBLISHED');
+  });
+
+  it('does not duplicate the snapshot when republishing unchanged content', async () => {
+    await authed('super', 'post', `/campaigns/${id}/status`, { action: 'unpublish' });
+    const republished = await authed('super', 'post', `/campaigns/${id}/status`, {
+      action: 'publish',
+    });
+    expect(republished.status).toBe(200);
+
+    const revisions = await owner.revision.findMany({ where: { entityId: id } });
+    expect(revisions).toHaveLength(1);
+    expect(revisions[0]?.status).toBe('PUBLISHED');
+  });
+
+  it('writes a new version when the content actually changes', async () => {
+    const current = await authed('super', 'get', `/campaigns/${id}`);
+    const edited = await authed('super', 'put', `/campaigns/${id}`, {
+      ...payload({ name: 'Dedup campaign renamed' }),
+      version: current.body.data.version,
+    });
+    expect(edited.status).toBe(200);
+
+    await authed('super', 'post', `/campaigns/${id}/status`, { action: 'unpublish' });
+    await authed('super', 'post', `/campaigns/${id}/status`, { action: 'publish' });
+
+    const revisions = await owner.revision.findMany({
+      where: { entityId: id },
+      orderBy: { version: 'asc' },
+    });
+
+    expect(revisions).toHaveLength(2);
+    expect(revisions.map((row) => row.version)).toEqual([1, 2]);
+    expect(revisions[0]?.status).toBe('SUPERSEDED');
+    expect(revisions[1]?.status).toBe('PUBLISHED');
+  });
+});
+
+describe('scheduled sweep failure isolation', () => {
+  const run = String(Date.now());
+  const failingSlug = `adm-fail-${run}`;
+  const healthySlug = `adm-ok-${run}`;
+  let failingId = '';
+  let healthyId = '';
+
+  const activity = (slug: string) => ({
+    title: 'Scheduled sweep item',
+    slug,
+    shortDescription: 'Scheduled activity used to test failure isolation.',
+    body: 'Body paragraph for the scheduled activity.',
+    category: null,
+    location: null,
+    isFeatured: false,
+    seoTitle: null,
+    seoDescription: null,
+    noindex: false,
+    version: 1,
+  });
+
+  const schedule = async (id: string): Promise<void> => {
+    await authed('super', 'post', `/activities/${id}/status`, {
+      action: 'schedule',
+      scheduledFor: new Date(Date.now() + 3_600_000).toISOString(),
+    });
+  };
+
+  beforeAll(async () => {
+    await login('super');
+
+    const failing = await authed('super', 'post', '/activities', activity(failingSlug));
+    const healthy = await authed('super', 'post', '/activities', activity(healthySlug));
+    failingId = failing.body.data.id;
+    healthyId = healthy.body.data.id;
+
+    await schedule(failingId);
+    await schedule(healthyId);
+
+    // Make both due.
+    await owner.activity.updateMany({
+      where: { id: { in: [failingId, healthyId] } },
+      data: { scheduledFor: new Date(Date.now() - 1000) },
+    });
+
+    // Deterministic, test-local failure: publishing this row would set it to
+    // PUBLISHED, which this constraint forbids. Dropped again below.
+    await owner.$executeRawUnsafe(
+      `ALTER TABLE "activities" ADD CONSTRAINT "test_fail_${run}" CHECK ("id" <> '${failingId}'::uuid OR "status" <> 'PUBLISHED')`,
+    );
+  });
+
+  afterAll(async () => {
+    await owner.$executeRawUnsafe(
+      `ALTER TABLE "activities" DROP CONSTRAINT IF EXISTS "test_fail_${run}"`,
+    );
+    await owner.revision.deleteMany({ where: { entityId: { in: [failingId, healthyId] } } });
+    await owner.activity.deleteMany({ where: { id: { in: [failingId, healthyId] } } });
+  });
+
+  it('isolates the failure, keeps the row unpublished, and retries successfully', async () => {
+    const sweep = await publishDueContent(prisma, logger);
+
+    expect(sweep.failed).toBeGreaterThanOrEqual(1);
+    expect(sweep.published).toBeGreaterThanOrEqual(1);
+
+    // The healthy item went live; the failing one did not.
+    expect((await request(app).get(`/api/v1/public/activities/${healthySlug}`)).status).toBe(200);
+    expect((await request(app).get(`/api/v1/public/activities/${failingSlug}`)).status).toBe(404);
+
+    const failingRow = await owner.activity.findUniqueOrThrow({ where: { id: failingId } });
+    expect(failingRow.status).toBe('SCHEDULED');
+    expect(failingRow.publishedAt).toBeNull();
+
+    // No partial revision survived the rollback.
+    expect(await owner.revision.count({ where: { entityId: failingId } })).toBe(0);
+
+    // Resolve the failure and let the next sweep retry.
+    await owner.$executeRawUnsafe(
+      `ALTER TABLE "activities" DROP CONSTRAINT IF EXISTS "test_fail_${run}"`,
+    );
+
+    const retry = await publishDueContent(prisma, logger);
+    expect(retry.published).toBeGreaterThanOrEqual(1);
+    expect((await request(app).get(`/api/v1/public/activities/${failingSlug}`)).status).toBe(200);
+
+    // Idempotent: another sweep publishes nothing.
+    const again = await publishDueContent(prisma, logger);
+    expect(again.published).toBe(0);
+  });
+});
+
+describe('event registration URL validation', () => {
+  const run = String(Date.now());
+  const ids: string[] = [];
+
+  const event = (slug: string, registrationUrl: string | null) => ({
+    title: 'Registration URL event',
+    slug,
+    description: 'An event used to check registration URL validation.',
+    startAt: new Date(Date.now() + 86_400_000).toISOString(),
+    endAt: null,
+    venueName: null,
+    venueAddress: null,
+    registrationUrl,
+    isFeatured: false,
+    seoTitle: null,
+    seoDescription: null,
+    noindex: false,
+    version: 1,
+  });
+
+  afterAll(async () => {
+    await owner.event.deleteMany({ where: { id: { in: ids } } });
+  });
+
+  it('accepts an https URL', async () => {
+    const response = await authed(
+      'super',
+      'post',
+      '/events',
+      event(`adm-url-https-${run}`, 'https://example.org/register'),
+    );
+
+    expect(response.status).toBe(201);
+    ids.push(response.body.data.id);
+  });
+
+  it('accepts an http URL', async () => {
+    const response = await authed(
+      'super',
+      'post',
+      '/events',
+      event(`adm-url-http-${run}`, 'http://example.org/register'),
+    );
+
+    expect(response.status).toBe(201);
+    ids.push(response.body.data.id);
+  });
+
+  it('accepts an empty optional URL', async () => {
+    const response = await authed('super', 'post', '/events', event(`adm-url-empty-${run}`, null));
+
+    expect(response.status).toBe(201);
+    ids.push(response.body.data.id);
+  });
+
+  it('rejects arbitrary text and names the field', async () => {
+    const response = await authed(
+      'super',
+      'post',
+      '/events',
+      event(`adm-url-bad-${run}`, 'not a url'),
+    );
+
+    expect(response.status).toBe(422);
+    expect(response.body.errors.map((error: { path: string }) => error.path)).toContain(
+      'registrationUrl',
+    );
+  });
+
+  it('rejects a malformed scheme', async () => {
+    const response = await authed(
+      'super',
+      'post',
+      '/events',
+      event(`adm-url-scheme-${run}`, 'javascript:alert(1)'),
+    );
+
+    expect(response.status).toBe(422);
   });
 });

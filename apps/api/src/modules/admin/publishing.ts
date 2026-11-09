@@ -19,6 +19,33 @@ export interface PublishOptions {
   readonly now?: Date;
 }
 
+/**
+ * Deterministic serialisation of a snapshot for comparison.
+ *
+ * JSON.stringify is order-sensitive, so two logically identical snapshots would
+ * compare unequal; keys are sorted at every level and `undefined` is dropped,
+ * matching how the value is stored.
+ */
+function canonical(value: unknown): string {
+  if (value === null || value === undefined) return 'null';
+
+  if (Array.isArray(value)) {
+    return `[${value.map((entry: unknown) => canonical(entry)).join(',')}]`;
+  }
+
+  if (typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, entry]) => entry !== undefined)
+      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
+
+    return `{${entries
+      .map(([key, entry]) => `${JSON.stringify(key)}:${canonical(entry)}`)
+      .join(',')}}`;
+  }
+
+  return JSON.stringify(value) ?? 'null';
+}
+
 /** Snapshot payload differs per type; the revision row shape does not. */
 async function writeSnapshot(
   tx: TransactionClient,
@@ -27,6 +54,20 @@ async function writeSnapshot(
   snapshot: Prisma.InputJsonObject,
   options: PublishOptions,
 ): Promise<void> {
+  const current = await tx.revision.findFirst({
+    where: { entityType, entityId, status: 'PUBLISHED' },
+    orderBy: { version: 'desc' },
+    select: { snapshot: true },
+  });
+
+  // Republishing unchanged content must not grow the history. The existing
+  // PUBLISHED revision stays live; nothing is superseded and no version is
+  // consumed. The entity row is already locked by this transaction, so a
+  // concurrent publisher sees the committed state rather than racing us.
+  if (current !== null && canonical(current.snapshot) === canonical(snapshot)) {
+    return;
+  }
+
   await tx.revision.updateMany({
     where: { entityType, entityId, status: 'PUBLISHED' },
     data: { status: 'SUPERSEDED' },
