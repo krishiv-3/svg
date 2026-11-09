@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+﻿import { describe, expect, it } from 'vitest';
 
 import { mapCampaignFieldErrors, validateManualEvidence } from './campaign-errors';
 
@@ -54,5 +54,33 @@ describe('validateManualEvidence', () => {
 
   it('does not demand a note for verified donations', () => {
     expect(validateManualEvidence('VERIFIED_DONATIONS', '', '')).toEqual({});
+  });
+
+  it('treats undefined as a missing note instead of throwing', () => {
+    expect(validateManualEvidence('MANUAL', '7500', undefined)['manualRaisedNote']).toBeDefined();
+  });
+
+  it('treats null as a missing note', () => {
+    expect(validateManualEvidence('MANUAL', '7500', null)['manualRaisedNote']).toBeDefined();
+  });
+
+  it('treats an empty string as a missing note', () => {
+    expect(validateManualEvidence('MANUAL', '7500', '')['manualRaisedNote']).toBeDefined();
+  });
+
+  it('never throws for missing optional input', () => {
+    expect(() => validateManualEvidence(undefined, undefined, undefined)).not.toThrow();
+    expect(() => validateManualEvidence(null, null, null)).not.toThrow();
+  });
+
+  it('requires evidence only while the source is manual', () => {
+    const manual = validateManualEvidence('MANUAL', '', '');
+    expect(manual['manualRaisedNote']).toBeDefined();
+    expect(manual['manualRaisedRupees']).toBeDefined();
+
+    // Switching to verified donations drops both requirements.
+    expect(validateManualEvidence('VERIFIED_DONATIONS', '', '')).toEqual({});
+    // Switching back restores them.
+    expect(validateManualEvidence('MANUAL', '', '')['manualRaisedNote']).toBeDefined();
   });
 });

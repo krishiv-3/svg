@@ -42,21 +42,25 @@ export function mapCampaignFieldErrors(errors: readonly ApiFieldError[]): {
 /**
  * Client-side guard mirroring the server rule, so the common mistake is caught
  * before a round trip. The server remains authoritative.
+ *
+ * Optional text arrives as `undefined` (key absent from an older payload or a
+ * partial form state), `null` (cleared field) or `''` (untouched input); all
+ * three mean "no note" and none may throw.
  */
 export function validateManualEvidence(
-  progressSource: string,
-  manualRaisedRupees: string,
-  manualRaisedNote: string,
+  progressSource: string | null | undefined,
+  manualRaisedRupees: string | null | undefined,
+  manualRaisedNote: string | null | undefined,
 ): Record<string, string> {
-  if (progressSource !== 'MANUAL') return {};
+  if ((progressSource ?? '') !== 'MANUAL') return {};
 
   const errors: Record<string, string> = {};
 
-  if (manualRaisedRupees.trim() === '') {
+  if ((manualRaisedRupees ?? '').trim() === '') {
     errors['manualRaisedRupees'] = 'Enter the amount raised so far.';
   }
 
-  if (manualRaisedNote.trim() === '') {
+  if ((manualRaisedNote ?? '').trim() === '') {
     errors['manualRaisedNote'] = 'Describe where the manual total comes from.';
   }
 

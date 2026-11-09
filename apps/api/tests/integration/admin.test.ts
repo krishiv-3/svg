@@ -1163,3 +1163,22 @@ describe('event registration URL validation', () => {
     expect(response.status).toBe(422);
   });
 });
+
+describe('campaign detail payload', () => {
+  it('includes the manual source note so the editor can populate it', async () => {
+    await login('super');
+    const slug = `adm-dto-${String(Date.now())}`;
+
+    const saved = await authed('super', 'post', '/campaigns', {
+      ...campaignPayload(slug),
+      manualRaisedNote: 'Recorded in the ledger',
+    });
+    created.campaigns.push(saved.body.data.id);
+
+    const detail = await authed('super', 'get', `/campaigns/${saved.body.data.id}`);
+
+    expect(detail.status).toBe(200);
+    expect(detail.body.data.manualRaisedNote).toBe('Recorded in the ledger');
+    expect(typeof detail.body.data.manualRaisedMinor).toBe('number');
+  });
+});

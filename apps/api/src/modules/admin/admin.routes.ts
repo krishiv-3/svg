@@ -105,6 +105,7 @@ function toCampaignDto(row: {
   purposeSummary: string;
   targetAmountMinor: bigint | null;
   manualRaisedMinor: bigint | null;
+  manualRaisedNote: string | null;
   progressSource: string;
   status: string;
   isFeatured: boolean;
@@ -123,6 +124,7 @@ function toCampaignDto(row: {
     purposeSummary: row.purposeSummary,
     targetAmountMinor: row.targetAmountMinor === null ? null : Number(row.targetAmountMinor),
     manualRaisedMinor: row.manualRaisedMinor === null ? null : Number(row.manualRaisedMinor),
+    manualRaisedNote: row.manualRaisedNote,
     progressSource: row.progressSource,
     status: row.status,
     isFeatured: row.isFeatured,
@@ -148,6 +150,7 @@ export function createAdminRouter({ prisma, config, logger }: AdminRouterDepende
     purposeSummary: true,
     targetAmountMinor: true,
     manualRaisedMinor: true,
+    manualRaisedNote: true,
     progressSource: true,
     status: true,
     isFeatured: true,

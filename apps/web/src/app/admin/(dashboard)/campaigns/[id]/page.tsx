@@ -50,7 +50,7 @@ export default async function EditCampaignPage({ params }: { params: Promise<{ i
     story: campaign.story,
     targetRupees: rupees(campaign.targetAmountMinor),
     manualRaisedRupees: rupees(campaign.manualRaisedMinor),
-    manualRaisedNote: campaign.manualRaisedNote,
+    manualRaisedNote: campaign.manualRaisedNote ?? '',
     progressSource: campaign.progressSource,
     startDate: campaign.startDate.slice(0, 10),
     endDate: campaign.endDate === null ? '' : campaign.endDate.slice(0, 10),

@@ -85,7 +85,17 @@ export function CampaignForm({
   mode?: 'create' | 'edit';
 }) {
   const router = useRouter();
-  const [values, setValues] = useState<CampaignFormValues>(initial);
+  // Optional text is normalised at the boundary: the API may return null for a
+  // cleared field, and a partial payload may omit it entirely. The form works in
+  // strings only, so nothing downstream has to defend against undefined.
+  const [values, setValues] = useState<CampaignFormValues>({
+    ...EMPTY,
+    ...initial,
+    manualRaisedRupees: initial.manualRaisedRupees ?? '',
+    manualRaisedNote: initial.manualRaisedNote ?? '',
+    seoTitle: initial.seoTitle ?? '',
+    seoDescription: initial.seoDescription ?? '',
+  });
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
