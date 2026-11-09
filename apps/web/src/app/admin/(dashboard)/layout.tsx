@@ -15,11 +15,11 @@ const NAV = [
   { label: 'Enquiries', href: '/admin/enquiries', ready: true },
   { label: 'Pages', href: '/admin/pages', ready: false },
   { label: 'Gallery', href: '/admin/gallery', ready: false },
-  { label: 'Testimonials', href: '/admin/testimonials', ready: false },
-  { label: 'Impact Statistics', href: '/admin/impact', ready: false },
+  { label: 'Testimonials', href: '/admin/testimonials', ready: true },
+  { label: 'Impact Statistics', href: '/admin/impact', ready: true },
   { label: 'Donations', href: '/admin/donations', ready: false },
-  { label: 'Users', href: '/admin/users', ready: false },
-  { label: 'Settings', href: '/admin/settings', ready: false },
+  { label: 'Users', href: '/admin/users', ready: true },
+  { label: 'Settings', href: '/admin/settings', ready: true },
 ] as const;
 
 /**

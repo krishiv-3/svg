@@ -28,6 +28,7 @@ import {
 import { AppError, NotFoundError, UnauthorizedError } from '../../core/http/errors.js';
 import { publishEntity } from './publishing.js';
 import { createContentAdminRouter } from './admin-content.routes.js';
+import { createBatch2Router } from './admin-batch2.routes.js';
 
 /**
  * Admin API: authentication and content management.
@@ -165,6 +166,7 @@ export function createAdminRouter({ prisma, config, logger }: AdminRouterDepende
 
   router.use(withAdmin(prisma));
   router.use(createContentAdminRouter({ prisma, audit }));
+  router.use(createBatch2Router({ prisma, audit }));
 
   /* --------------------------------------------------------------- session */
 
